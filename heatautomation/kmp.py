@@ -29,7 +29,6 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import ElementClickInterceptedException
-#from webdriver_manager.chrome import ChromeDriverManager
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -69,6 +68,8 @@ def start_chrome():
 
 def login(driver):
     try:
+        if driver is None:
+            raise RuntimeError("Failed to initialize the WebDriver. Please check the ChromeDriver setup.")
         driver.get(PORTAL_URL)
         wait = WebDriverWait(driver, 15)
         wait.until(EC.presence_of_element_located((By.ID, "kmac"))).send_keys(USERNAME)
@@ -112,7 +113,8 @@ def off():
             logging.info(f"Pellet stove is on, turning it off.")
             click_start(driver)
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
 
 def on():
     driver = start_chrome()
