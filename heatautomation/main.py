@@ -28,178 +28,117 @@ import logging
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Retry helper function with dynamic delays
+# Retry helper function with exponential backoff
 def retry_function(func, retries=3, delay=5):
-    """Tries a function with retries in case of failure."""
     for attempt in range(retries):
         try:
             return func()
         except Exception as e:
             logging.error(f"Attempt {attempt + 1} failed: {e}")
             if attempt < retries - 1:
-                next_delay = delay * (2 ** attempt)  # Exponential backoff
-                logging.info(f"Retrying in {next_delay} seconds...")
-                time.sleep(next_delay)
+                time.sleep(delay * (2 ** attempt))
             else:
                 logging.error("Max retries reached. Function failed.")
                 return None
 
+# Fetch spot price with retry logic
 def get_spot_price_safe():
-    """Safely fetches the spot price from Tibber with retry logic."""
     return retry_function(tibber.get_spot_price)
 
+# Wait until the next full quarter hour
 def wait_until_next_quarter():
-    """Waits until the next full quarter hour (00, 15, 30, 45)."""
     now = datetime.now()
-    
-    # Calculate the next quarter hour
     next_quarter_minute = (now.minute // 15 + 1) * 15
     if next_quarter_minute == 60:
-        # If next quarter is 60, reset to next hour and set minute to 00
-        next_quarter_minute = 0
-        if now.hour == 23:
-            # If it's 23:59, set to 00:00 of the next day
-            next_time = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        else:
-            # Otherwise, just increment the hour
-            next_time = now.replace(hour=now.hour + 1, minute=next_quarter_minute, second=0, microsecond=0)
+        next_time = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
     else:
-        # Otherwise, just update the minute to the next quarter
         next_time = now.replace(minute=next_quarter_minute, second=0, microsecond=0)
-    
-    # If next time exceeds 23:59 (midnight), we need to move to the next day
-    if next_time.hour == 24:
-        next_time = next_time.replace(hour=0, minute=0)
-    
-    # Calculate the sleep time
-    wait_time = (next_time - now).total_seconds()
-    logging.info(f"Waiting for {wait_time:.2f} seconds until the next quarter hour.")
-    
-    # Sleep until next quarter hour
-    time.sleep(wait_time)
+    time.sleep((next_time - now).total_seconds())
 
-def evaluate_heater(spot_price):
-    adjusted_price = 2.99 - 0.94875  # Fixed cost adjustment
-    logging.info(f"Spot price: {spot_price}, adjusted price: {adjusted_price}")
-    if spot_price <= adjusted_price:
-        logging.info("Electricity is cheaper than pellets.")
-        return "heatpump"
+# Calculate heating capacity based on outdoor temperature
+def get_effective_heating_capacity(outdoor_temp):
+    if outdoor_temp >= 0:
+        return 6.5
+    elif outdoor_temp >= -12.5:
+        return 4.0
+    elif outdoor_temp >= -17.5:
+        return 3.6
     else:
-        logging.info("The pellet stove is cheaper than the heatpump.")
-        return "pelletstove"
+        return 2.6
 
+# Calculate cost based on SCOP
+def calculate_energy_cost_with_scop(spot_price, heating_capacity, scop=3.8):
+    energy_used = heating_capacity / scop
+    return energy_used * spot_price
+
+# Turn on heat pump with retry logic
+def turn_on_heat_pump():
+    retry_function(sensibo.on)
+    retry_function(kmp.off)
+
+# Turn on pellet stove with retry logic
+def turn_on_pellet_stove():
+    retry_function(kmp.on)
+    retry_function(sensibo.off)
+
+# Unified decision logic for heating source
+def decide_heating_source(outdoor_temp, spot_price, max_price_threshold=3.0, scop=3.8):
+    heating_capacity = get_effective_heating_capacity(outdoor_temp)
+    adjusted_threshold = max_price_threshold - 0.94875
+    electricity_cost = calculate_energy_cost_with_scop(spot_price, heating_capacity, scop)
+
+    if electricity_cost <= adjusted_threshold and heating_capacity >= 3.0:
+        logging.info(f"Heat pump selected at {outdoor_temp}°C, {heating_capacity} kW, cost: {electricity_cost:.2f} SEK.")
+        return "heatpump", heating_capacity
+    else:
+        logging.info(f"Pellet stove selected at {outdoor_temp}°C. Electricity cost too high or capacity too low.")
+        return "pelletstove", 5.0
+
+# System availability check
 def check_systems():
-    """Check if systems are available and functioning."""
     try:
         sensibo_status = sensibo.check_connection()
         kmp_status = kmp.check_connection()
-
-        if not sensibo_status and not kmp_status:
-            logging.error("Both systems are down.")
-        elif not sensibo_status:
-            logging.warning("Sensibo is down. Using pellet stove.")
-            kmp.on()
-        elif not kmp_status:
-            logging.warning("KMP is down. Using heat pump.")
-            sensibo.on()
-
         return sensibo_status, kmp_status
     except Exception as e:
-        logging.error(f"Error checking system connections: {e}")
+        logging.error(f"Error checking systems: {e}")
         return False, False
 
+# Main program loop
 def main_loop():
-    heatType = "none"
+    current_heat_type = "none"
 
     while True:
-        # Log data for Machine Learning
-        heating_capacity = get_effective_heating_capacity(outdoor_temp)
-        log_data(datetime.now(), spot_price, outdoor_temp, heater_type, heating_capacity)
-        # Get the spot price and evaluate the best heating system
         spot_price = get_spot_price_safe()
-        outdoor_temp = smhi.get_outdoor_temp()
         if spot_price is None:
-            logging.warning("No spot price available. Skipping this cycle.")
-            time.sleep(30)  # Retry sooner, adjust based on needs
+            logging.warning("No spot price available. Skipping cycle.")
+            time.sleep(30)
             continue
-        else:
-            heater_type = evaluate_heater_with_temperature(outdoor_temp, spot_price, max_price_threshold=3.0)
-            if heater_type == "heatpump":
-                if heatType != "heatpump":
-                    logging.info("Starting the heat pump...")
-                    try:
-                        sensibo.on()
-                        kmp.off()
-                        heatType = "heatpump"
-                    except Exception as e:
-                        logging.error(f"Error starting the heat pump: {e}")
-                else:
-                    logging.info("Heat pump is already running.")
-            else:
-                if heatType != "pelletstove":
-                    logging.info("Starting the pellet stove...")
-                    try:
-                        kmp.on()
-                        sensibo.off()
-                        heatType = "pelletstove"
-                    except Exception as e:
-                        logging.error(f"Error starting the pellet stove: {e}")
-                else:
-                    logging.info("Pellet stove is already running.")
 
-        # Check system status periodically (could be adjusted for more frequent checks)
-        sensibo_status, kmp_status = check_systems() # TODO
+        outdoor_temp = smhi.get_outdoor_temp()
+        heating_type, heating_capacity = decide_heating_source(outdoor_temp, spot_price)
+
+        if heating_type == "heatpump" and current_heat_type != "heatpump":
+            logging.info("Activating heat pump...")
+            turn_on_heat_pump()
+            current_heat_type = "heatpump"
+        elif heating_type == "pelletstove" and current_heat_type != "pelletstove":
+            logging.info("Activating pellet stove...")
+            turn_on_pellet_stove()
+            current_heat_type = "pelletstove"
+        else:
+            logging.info(f"{heating_type.capitalize()} is already active.")
+
+        # System availability monitoring
+        sensibo_status, kmp_status = check_systems()
         if not sensibo_status or not kmp_status:
-            logging.warning("One or more systems are unavailable. Taking necessary action.")
+            logging.warning("One or more systems unavailable. Action taken.")
 
-        # Wait until the next full quarter hour (00, 15, 30, 45)
+        # Log data for ML training
+        log_data(datetime.now(), spot_price, outdoor_temp, heating_type, heating_capacity)
+
         wait_until_next_quarter()
-
-def get_effective_heating_capacity(outdoor_temp):
-    """Calculates the heating effect based on outdoor temperature according to specification."""
-    if outdoor_temp >= 0:
-        return 6.5  # Max heating effect
-    elif outdoor_temp >= -12.5:
-        return 4.0  # Heating effect at -10°C
-    elif outdoor_temp >= -17.5:
-        return 3.6  # Heating effect at -15°C
-    else:
-        return 2.6  # Heating effect at -20°C
-
-def evaluate_heater_with_temperature(outdoor_temp, spot_price, max_price_threshold=3.0):
-    """Evaluates whether the heat pump or the pellet stove is more effective based on outdoor temperature and spot price."""
-    effective_heating_capacity = get_effective_heating_capacity(outdoor_temp)
-    adjusted_price = max_price_threshold - 0.94875  # Dynamic price adjustment
-
-    if spot_price <= adjusted_price and effective_heating_capacity >= 3.0:
-        logging.info(f"The heat pump is the most effective at {outdoor_temp}°C with {effective_heating_capacity} kW heating effect.")
-        return "heatpump"
-    else:
-        logging.info(f"The pellet stove is more effective than the heat pump at {outdoor_temp}°C with 5 kW heating effect.")
-        return "pelletstove"
-    
-def calculate_energy_cost_with_scop(spot_price, heating_capacity, scop=3.8):
-    """Calculates energy use based on SCOP (Seasonal Coefficient of Performance)."""
-    # Effective energy use per kWh
-    energy_used = heating_capacity / scop
-    # Calculating the cost for generating the necessary amount of heat
-    cost = energy_used * spot_price
-    logging.info(f"To generate {heating_capacity} kWh heat, {energy_used:.2f} kWh electricity is used. Cost: {cost:.2f} SEK.")
-    return cost
-
-def optimize_heating_system(outdoor_temp, spot_price):
-    heater_type = evaluate_heater_with_temperature(outdoor_temp, spot_price)
-    if heater_type == "heatpump":
-        heating_capacity = get_effective_heating_capacity(outdoor_temp)
-        cost = calculate_energy_cost_with_scop(spot_price, heating_capacity)
-        threshold_cost = (2.99 - 0.94875)  # Adjust this threshold as needed
-        if cost > threshold_cost:
-            logging.info("The heat pump is too expensive, starting the pellet stove instead.")
-            return "pelletstove"
-        else:
-            return "heatpump"
-    else:
-        return "pelletstove"
 
 if __name__ == "__main__":
     main_loop()
+    logging.info("Starting main loop...")
