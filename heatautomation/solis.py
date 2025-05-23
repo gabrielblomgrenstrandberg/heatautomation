@@ -16,8 +16,6 @@
 
 # module: solis.py – A module for interacting with the Solis Cloud API for solar production data.
 
-# module: solis.py – A module for interacting with the Solis Cloud API for solar production data.
-
 import requests
 import hashlib
 import hmac
@@ -29,6 +27,11 @@ import logging
 
 # Ladda miljövariabler
 load_dotenv()
+KEY_ID = os.getenv("SOLIS_KEY_ID", "")
+KEY_SECRET = os.getenv("SOLIS_KEY_SECRET", "")
+STATION_ID = os.getenv("SOLIS_STATION_ID", "")
+BASE_URL = os.getenv("BASE_URL", "https://api.soliscloud.com:13333")
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
@@ -37,6 +40,7 @@ def generate_signature(secret, timestamp, path):
     raw = f"{KEY_ID}{timestamp}{path}"
     hashed = hmac.new(secret.encode("utf-8"), raw.encode("utf-8"), hashlib.sha1)
     return base64.b64encode(hashed.digest()).decode("utf-8")
+
 
 def get_current_production():
     timestamp = str(int(time.time() * 1000))
@@ -64,19 +68,20 @@ def get_current_production():
         if data.get("success"):
             power = data.get("data", {}).get("pac")
             if power is not None:
-                logging.info(f"Aktuell solelsproduktion: {power} W")
+                logging.info(f"Current solar production: {power} W")
                 return power
             else:
-                logging.warning("Fältet 'pac' saknas i svaret.")
+                logging.warning("Missing 'pac' field in response.")
                 return None
         else:
-            logging.error(f"API-svar indikerar fel: {data.get('msg')}")
+            logging.error(f"API response indicates failure: {data.get('msg')}")
             return None
 
     except Exception as e:
-        logging.error(f"Fel vid anrop till SolisCloud API: {e}")
+        logging.error(f"Error while calling SolisCloud API: {e}")
         return None
-    
+
+
 def list_stations():
     request_path = "/v1/api/stationList"
     timestamp = str(int(time.time() * 1000))
@@ -97,28 +102,22 @@ def list_stations():
         res = requests.post(f"{BASE_URL}{request_path}", json={}, headers=headers, timeout=10)
         res.raise_for_status()
         data = res.json()
-        logging.info("Stationslista hämtad:")
+        logging.info("Station list retrieved:")
         logging.info(data)
         return data
     except Exception as e:
-        logging.error(f"Fel vid anrop till stationList: {e}")
+        logging.error(f"Error while calling stationList: {e}")
         return None
 
 
-
-# Testkörning
 if __name__ == "__main__":
-    KEY_ID = ""         # Din keyId från SolisCloud
-    KEY_SECRET = "" # Din keySecret från SolisCloud
-    STATION_ID = "" # Station ID
-    BASE_URL = "https://www.soliscloud.com"
     if not KEY_ID or not KEY_SECRET:
-        logging.error("KEY_ID eller KEY_SECRET saknas! Kontrollera .env-filen.")
-    print(KEY_ID)
-    print(KEY_SECRET)
-    list_stations() 
-    current_power = get_current_production()
-    if current_power is not None:
-        print(f"Aktuell solelsproduktion: {current_power} W")
+        logging.error("KEY_ID or KEY_SECRET missing! Check your .env file.")
     else:
-        print("Kunde inte hämta produktion.")
+        list_stations()
+        current_power = get_current_production()
+        if current_power is not None:
+            logging.info(f"Current solar production: {current_power} W")
+        else:
+            logging.error("Failed to fetch current production.")
+            
