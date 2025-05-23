@@ -16,50 +16,60 @@
 
 # module: smhi.py – A module for fetching outdoor temperature from SMHI using Selenium.
 
+import os
+import shutil
+import logging
+from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-import logging
-import shutil
 
-# Setup logging for better error tracking
+# Load environment variables from .env file if present
+load_dotenv()
+
+# Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def get_outdoor_temp():
     url = "https://www.smhi.se/vader/prognoser-och-varningar/vaderprognos/q/hagge/2709191"
 
-    # Configure Chrome to run in headless mode
+    # Configure Chrome to run headless
     options = Options()
-    options.add_argument("--headless")  # Run without opening a window
-    options.add_argument("--disable-gpu")  # Disable GPU acceleration
-    options.add_argument("--no-sandbox")  # Needed for running as root in some environments
-    options.add_argument("--disable-dev-shm-usage")  # Prevent issues with shared memory
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.binary_location = "/usr/bin/chromium"
 
-    chromedriver_path = shutil.which("chromedriver")
+
+    # Get chromedriver path from environment or PATH
+    chromedriver_path = os.getenv("CHROMEDRIVER_PATH") or shutil.which("chromedriver")
     if not chromedriver_path:
-        raise RuntimeError("chromedriver not found in PATH")
+        raise RuntimeError(
+            "chromedriver not found. Set CHROMEDRIVER_PATH environment variable or add chromedriver to PATH."
+        )
+
     driver = webdriver.Chrome(service=Service(chromedriver_path), options=options)
 
     try:
-        # Open the target URL
         driver.get(url)
 
         # Wait until the temperature element is present
         wait = WebDriverWait(driver, 10)
-        temperature_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span._asH1_1bwlw_168')))
+        temperature_element = wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, 'span._asH1_1bwlw_168'))
+        )
         
-        # Get the temperature text
         temperature = temperature_element.text.strip()
-        
+
         if not temperature:
             logging.warning("Temperature value is empty!")
             return None
 
-        # Remove the degree symbol and handle special minus characters
+        # Clean up temperature value
         temperature = temperature.replace("°", "").replace("−", "-")
         temperature_int = int(temperature)
 
@@ -71,7 +81,6 @@ def get_outdoor_temp():
         return None
 
     finally:
-        # Always close the browser session
         driver.quit()
 
 # Example usage
