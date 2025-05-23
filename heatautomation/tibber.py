@@ -20,6 +20,7 @@ import os
 import requests
 import json
 import logging
+import sys
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 from dotenv import load_dotenv
 load_dotenv()
@@ -29,6 +30,10 @@ URL = "https://api.tibber.com/v1-beta/gql"
 
 
 def get_spot_price():
+    if not TIBBER_API_KEY:
+      logging.critical("TIBBER_API_KEY is not set. Please check your .env file.")
+      sys.exit(1)
+
     """
     Fetches the current spot price from the Tibber API.
     Returns:
