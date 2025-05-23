@@ -108,9 +108,9 @@ def list_stations():
 
 # Testkörning
 if __name__ == "__main__":
-    KEY_ID = "1300386381676607367"         # Din keyId från SolisCloud
-    KEY_SECRET = "d453de347b1f45f09d901130cb910d01" # Din keySecret från SolisCloud
-    STATION_ID = "136F24" # Station ID
+    KEY_ID = ""         # Din keyId från SolisCloud
+    KEY_SECRET = "" # Din keySecret från SolisCloud
+    STATION_ID = "" # Station ID
     BASE_URL = "https://www.soliscloud.com"
     if not KEY_ID or not KEY_SECRET:
         logging.error("KEY_ID eller KEY_SECRET saknas! Kontrollera .env-filen.")
