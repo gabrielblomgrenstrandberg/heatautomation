@@ -21,6 +21,7 @@ import sensibo
 import kmp
 import smhi
 import time
+from datalogger import log_data
 from datetime import datetime, timedelta
 import logging
 
@@ -111,6 +112,9 @@ def main_loop():
     heatType = "none"
 
     while True:
+        # Log data for Machine Learning
+        heating_capacity = get_effective_heating_capacity(outdoor_temp)
+        log_data(datetime.now(), spot_price, outdoor_temp, heater_type, heating_capacity)
         # Get the spot price and evaluate the best heating system
         spot_price = get_spot_price_safe()
         outdoor_temp = smhi.get_outdoor_temp()
