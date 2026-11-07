@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -190,22 +191,58 @@ class CostConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
             shutil.copyfile(source / "config.py", target / "config.py")
+            shutil.copyfile(source / "heating_model.py", target / "heating_model.py")
             contents = (source / "heatautomation.conf").read_text(encoding="utf-8")
-            contents = contents.replace("\nenabled = false\n", "\nenabled = true\n")
+            for name in ("pellet_energy_kwh_per_kg", "pellet_price_per_bag",
+                         "cop_by_temperature", "demand_by_temperature"):
+                contents = re.sub(
+                    r"(?m)^" + name + r"[ \t]*=[^\n]*(?:\n[ \t]+[^\n]*)*",
+                    name + " =", contents,
+                )
             path = target / "heatautomation.conf"
             path.write_text(contents, encoding="utf-8")
             env = os.environ.copy()
             env.pop("SPOT_PRICE_LIMIT", None)
+            result = subprocess.run(
+                [sys.executable, "-c", "import config; assert not config.COST_CONTROL_ENABLED"],
+                cwd=directory, env=env, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            contents = contents.replace("\nenabled = false\n", "\nenabled = true\n")
+            path.write_text(contents, encoding="utf-8")
             command = [sys.executable, "-c", "import config; assert config.COST_CONTROL_ENABLED"]
             result = subprocess.run(command, cwd=directory, env=env, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            contents = contents.replace("pellet_cost_per_kwh =", "pellet_cost_per_kwh = 0.9")
+            contents = contents.replace(
+                "pellet_energy_kwh_per_kg =", "pellet_energy_kwh_per_kg = 5"
+            )
+            contents = contents.replace(
+                "pellet_price_per_bag =", "pellet_price_per_bag = 75.2"
+            )
             contents = contents.replace("cop_by_temperature =", "cop_by_temperature =\n    10, 4\n    0, 3")
             contents = contents.replace("demand_by_temperature =", "demand_by_temperature =\n    10, 1\n    0, 4")
             path.write_text(contents, encoding="utf-8")
+            command = [
+                sys.executable, "-c",
+                "import config; assert config.COST_CONTROL_ENABLED; "
+                "assert abs(config.PELLET_COST_PER_KWH - 1.0) < 1e-12"
+            ]
             result = subprocess.run(command, cwd=directory, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             for old, new in [
+                ("pellet_bag_size_kg = 16", "pellet_bag_size_kg = 0"),
+                ("pellet_bag_size_kg = 16", "pellet_bag_size_kg = nan"),
+                ("pellet_bag_size_kg = 16", "pellet_bag_size_kg = not-a-number"),
+                ("pellet_bag_size_kg = 16", "pellet_bag_size_kg = 1e-320"),
+                ("pellet_energy_kwh_per_kg = 5", "pellet_energy_kwh_per_kg = -1"),
+                ("pellet_energy_kwh_per_kg = 5", "pellet_energy_kwh_per_kg = inf"),
+                ("pellet_price_per_bag = 75.2", "pellet_price_per_bag = 0"),
+                ("pellet_price_per_bag = 75.2", "pellet_price_per_bag = 5e-324"),
+                ("stove_efficiency_percent = 94", "stove_efficiency_percent = 0"),
+                ("stove_efficiency_percent = 94", "stove_efficiency_percent = 101"),
+                ("stove_efficiency_percent = 94", "stove_efficiency_percent = nan"),
+                ("stove_efficiency_percent = 94", "stove_efficiency_percent = 1e-320"),
+                ("pellet_bag_size_kg = 16", "pellet_bag_size_kg = 1e308"),
                 ("cost_hysteresis = 0.10", "cost_hysteresis = 1"),
                 ("minimum_runtime_minutes = 30", "minimum_runtime_minutes = -1"),
                 ("10, 4\n    0, 3", "0, 0\n    10, 3"),
@@ -217,6 +254,32 @@ class CostConfigurationTests(unittest.TestCase):
                                             capture_output=True, text=True)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("ValueError", result.stderr)
+
+            path.write_text(contents.replace("stove_efficiency_percent = 94",
+                                             "stove_efficiency_percent = 100"), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, "-c", "import config; assert abs(config.PELLET_COST_PER_KWH - 0.94) < 1e-12"],
+                cwd=directory, env=env, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            for old, new in [
+                ("pellet_bag_size_kg = 16", "pellet_bag_size_kg = 20"),
+                ("pellet_energy_kwh_per_kg = 5", "pellet_energy_kwh_per_kg = 6"),
+                ("pellet_price_per_bag = 75.2", "pellet_price_per_bag = 50"),
+                ("stove_efficiency_percent = 94", "stove_efficiency_percent = 100"),
+            ]:
+                with self.subTest(changed=new):
+                    path.write_text(contents.replace(old, new), encoding="utf-8")
+                    result = subprocess.run(
+                        [sys.executable, "-c",
+                         "import config, heating_model; "
+                         "assert heating_model.select(0, 3, 5, 6, "
+                         "config.PELLET_COST_PER_KWH, config.COP_BY_TEMPERATURE, "
+                         "config.DEMAND_BY_TEMPERATURE, 0)[0] == 'pelletstove'"],
+                        cwd=directory, env=env, capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

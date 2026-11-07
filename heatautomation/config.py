@@ -155,7 +155,24 @@ def _curve(name, allow_zero=False):
 
 COST_CONTROL_ENABLED = _boolean("cost_control", "enabled")
 if COST_CONTROL_ENABLED:
-    PELLET_COST_PER_KWH = _number("cost_control", "pellet_cost_per_kwh", positive=True)
+    PELLET_BAG_SIZE_KG = _number("cost_control", "pellet_bag_size_kg", positive=True)
+    PELLET_ENERGY_KWH_PER_KG = _number(
+        "cost_control", "pellet_energy_kwh_per_kg", positive=True
+    )
+    PELLET_PRICE_PER_BAG = _number("cost_control", "pellet_price_per_bag", positive=True)
+    STOVE_EFFICIENCY_PERCENT = _number(
+        "cost_control", "stove_efficiency_percent", positive=True
+    )
+    if STOVE_EFFICIENCY_PERCENT > 100:
+        raise ValueError("[cost_control] stove_efficiency_percent must not exceed 100")
+    delivered_energy = (
+        PELLET_BAG_SIZE_KG * PELLET_ENERGY_KWH_PER_KG * (STOVE_EFFICIENCY_PERCENT / 100)
+    )
+    if not math.isfinite(delivered_energy) or delivered_energy <= 0:
+        raise ValueError("[cost_control] delivered energy per bag must be finite and positive")
+    PELLET_COST_PER_KWH = PELLET_PRICE_PER_BAG / delivered_energy
+    if not math.isfinite(PELLET_COST_PER_KWH) or PELLET_COST_PER_KWH <= 0:
+        raise ValueError("[cost_control] pellet cost per kWh must be finite and positive")
     COP_BY_TEMPERATURE = _curve("cop_by_temperature")
     DEMAND_BY_TEMPERATURE = _curve("demand_by_temperature", allow_zero=True)
     COST_HYSTERESIS = _number("cost_control", "cost_hysteresis", non_negative=True)

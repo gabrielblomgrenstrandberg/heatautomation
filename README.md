@@ -35,12 +35,20 @@ The `[cost_control]` section is disabled by default because this repository
 does not have measured COP, heating demand, or pellet cost for your home.
 Before setting `enabled = true`, supply:
 
-* `pellet_cost_per_kwh`: your actual cost in SEK per delivered kWh of heat,
-  including fuel, efficiency losses, and any relevant stove electricity.
+* `pellet_bag_size_kg` (default 16), `pellet_energy_kwh_per_kg`,
+  `pellet_price_per_bag` (SEK), and `stove_efficiency_percent` (default 94).
+  The pellet fuel cost per delivered kWh is calculated as
+  `price per bag / (bag size × energy per kg × efficiency / 100)`.
+  This estimate does not include electricity used by the stove.
 * `cop_by_temperature`: measured or manufacturer COP values for your heat pump
   at representative outdoor temperatures and operating conditions.
 * `demand_by_temperature`: estimated heat demand in kW at those temperatures.
-  Calibrate it to your building; it is not measured by this application.
+  The illustrative default assumes a 100 m² house needing 5 kW at -20°C and
+  no space heating at 18°C. It does not include hot water. As a rough starting
+  point, scale the kW values by your heated area divided by 100 m², then
+  calibrate them to your building and climate; demand is not measured by this
+  application. A zero value requests both sources off, so adjust the warm
+  endpoint if heating is still needed at that temperature.
 
 Enter each curve as `temperature, value` rows ordered from warmest to coldest.
 Values are linearly interpolated and clamped at the endpoints. The existing
