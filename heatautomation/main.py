@@ -31,6 +31,11 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 GRID_POLL_INTERVAL_SECONDS = 5 * 60
+FAN_POLL_INTERVAL_SECONDS = 60
+FAN_ASSIST_ENABLED = os.getenv("HEATAUTOMATION_FAN_ASSIST", "false").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+CONTROL_LOCK = threading.RLock()
 
 TEST_MODE = os.getenv("HEATAUTOMATION_TEST_MODE", "true").strip().lower() in {
     "1", "true", "yes", "on"
@@ -81,19 +86,127 @@ def calculate_energy_cost_with_scop(spot_price, heating_capacity, scop=3.8):
 
 # Turn on heat pump with retry logic
 def turn_on_heat_pump():
+    with CONTROL_LOCK:
+        return _turn_on_heat_pump()
+
+
+def _turn_on_heat_pump():
     if TEST_MODE:
-        logging.info("TEST MODE: would turn on Sensibo and turn off KMP.")
-        return
-    retry_function(sensibo.on)
-    retry_function(kmp.off)
+        status = kmp.get_status()
+        if not status or not kmp.can_turn_off(status.get("mode")):
+            logging.warning("TEST MODE: heat pump switch deferred; KMP mode is not safe.")
+            return False
+        logging.info("TEST MODE: would turn off KMP and turn on Sensibo.")
+        return True
+    if not retry_function(kmp.off):
+        logging.warning("Heat pump switch deferred; KMP was not turned off.")
+        return False
+    if retry_function(sensibo.on) is None:
+        logging.error("Heat pump switch failed: Sensibo could not be turned on.")
+        return False
+    return True
 
 # Turn on pellet stove with retry logic
 def turn_on_pellet_stove():
+    with CONTROL_LOCK:
+        return _turn_on_pellet_stove()
+
+
+def _turn_on_pellet_stove():
     if TEST_MODE:
+        status = kmp.get_status()
+        if not status or not kmp.can_turn_on(status.get("mode")):
+            logging.warning("TEST MODE: pellet stove switch deferred; KMP mode is unknown.")
+            return False
         logging.info("TEST MODE: would turn on KMP and turn off Sensibo.")
-        return
-    retry_function(kmp.on)
-    retry_function(sensibo.off)
+        return True
+    if not retry_function(kmp.on):
+        logging.warning("Pellet stove switch deferred; KMP could not be turned on.")
+        return False
+    if FAN_ASSIST_ENABLED and fan_assist.active:
+        state = sensibo.get_fan_state()
+        if state is None:
+            logging.warning("Pellet stove switch deferred; Sensibo state is unavailable.")
+            return False
+        if (state.get("on") is True and state.get("mode") == "fan"
+                and state.get("fanLevel") == fan_assist.fan_level):
+            logging.info("Leaving Sensibo fan assist running while the pellet stove is active.")
+            return True
+    if retry_function(sensibo.off) is None:
+        logging.error("Pellet stove switch failed: Sensibo could not be turned off.")
+        return False
+    return True
+
+
+class FanAssist:
+    def __init__(self):
+        self.active = False
+        self.fan_level = None
+
+    def poll(self):
+        with CONTROL_LOCK:
+            status = kmp.get_status()
+            mode = status.get("mode") if status else None
+            known_modes = kmp.RUNNING_MODES | kmp.IDLE_MODES | kmp.OFF_MODES
+            if mode not in known_modes:
+                logging.warning("Fan assist deferred: KMP mode is unavailable or unknown.")
+                return
+
+            if mode == "HÖGEFFEKT":
+                self._start_or_maintain()
+            elif self.active:
+                self._stop()
+
+    def _start_or_maintain(self):
+        level = sensibo.get_fan_level()
+        if level is None:
+            return
+        state = sensibo.get_fan_state()
+        if state is None:
+            return
+        if state.get("on") is True and state.get("mode") == "fan" and state.get("fanLevel") == level:
+            self.active = True
+            self.fan_level = level
+            return
+        if TEST_MODE:
+            logging.info("TEST MODE: would turn on Sensibo fan at level %s.", level)
+        elif retry_function(lambda: sensibo.fan_on(level)) is None:
+            logging.error("Fan assist could not turn on the Sensibo fan.")
+            return
+        self.active = True
+        self.fan_level = level
+
+    def _stop(self):
+        state = sensibo.get_fan_state()
+        if state is None:
+            return
+        if (state.get("on") is True and state.get("mode") == "fan"
+                and state.get("fanLevel") == self.fan_level):
+            if TEST_MODE:
+                logging.info("TEST MODE: would turn off the Sensibo fan.")
+            elif retry_function(sensibo.off) is None:
+                logging.error("Fan assist could not turn off the Sensibo fan.")
+                return
+        elif TEST_MODE:
+            logging.info("TEST MODE: would stop Sensibo fan assist.")
+        self.active = False
+        self.fan_level = None
+
+
+fan_assist = FanAssist()
+
+
+def fan_monitor_loop():
+    next_poll = time.monotonic()
+    while True:
+        sleep_seconds = next_poll - time.monotonic()
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+        fan_assist.poll()
+        next_poll += FAN_POLL_INTERVAL_SECONDS
+        if next_poll <= time.monotonic():
+            next_poll = time.monotonic() + FAN_POLL_INTERVAL_SECONDS
+
 
 # Unified decision logic for heating source
 def decide_heating_source(outdoor_temp, spot_price, max_price_threshold=3.0, scop=3.8):
@@ -198,6 +311,12 @@ def main_loop():
         name="tibber-grid-monitor",
         daemon=True
     ).start()
+    if FAN_ASSIST_ENABLED:
+        threading.Thread(
+            target=fan_monitor_loop,
+            name="pellet-fan-monitor",
+            daemon=True
+        ).start()
 
     if TEST_MODE:
         logging.info(
@@ -220,14 +339,20 @@ def main_loop():
 
         heating_type, heating_capacity = decide_heating_source(outdoor_temp, spot_price)
 
+        switch_failed = False
         if heating_type == "heatpump" and current_heat_type != "heatpump":
             logging.info("Activating heat pump...")
-            turn_on_heat_pump()
-            current_heat_type = "heatpump"
+            if turn_on_heat_pump():
+                current_heat_type = "heatpump"
+            else:
+                switch_failed = True
         elif heating_type == "pelletstove" and current_heat_type != "pelletstove":
             logging.info("Activating pellet stove...")
-            turn_on_pellet_stove()
-            current_heat_type = "pelletstove"
+            if turn_on_pellet_stove():
+                current_heat_type = "pelletstove"
+            else:
+                current_heat_type = "none"
+                switch_failed = True
         else:
             logging.info(f"{heating_type.capitalize()} is already active.")
 
@@ -236,7 +361,8 @@ def main_loop():
             logging.warning("One or more systems unavailable or could not be read.")
 
         # Log data for ML training
-        log_data(datetime.now(), spot_price, outdoor_temp, heating_type, heating_capacity)
+        if not switch_failed:
+            log_data(datetime.now(), spot_price, outdoor_temp, heating_type, heating_capacity)
 
         wait_until_next_quarter()
 

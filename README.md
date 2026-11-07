@@ -17,6 +17,30 @@ five minutes when real-time consumption is enabled for the selected Tibber
 home. If it is unavailable, check the Pulse installation and the home's
 real-time access in Tibber; the remaining heating control can continue.
 
+When switching from the pellet stove to the heat pump, the controller waits
+while KMP reports `LADDAR`, `TÄNDNING`, `UPPVÄRMNING`, or `HÖGEFFEKT`.
+It rechecks the heating decision and stove mode on the next quarter-hour cycle.
+The switch proceeds once KMP is in `VILOLÄGE, SLÄCKER NED`, `VILAR...`, or
+already off. An unavailable or unknown mode also defers the switch.
+Switching to the pellet stove likewise requires a recognized KMP mode; otherwise
+the heat pump is left unchanged and the switch is retried on the next cycle.
+
+## Pellet stove fan assist
+
+Set `HEATAUTOMATION_FAN_ASSIST=true` to enable the optional fan assist (disabled
+by default). It checks KMP once per minute and, while its mode is `HÖGEFFEKT`,
+sets Sensibo to fan mode at its highest supported fixed fan level. When KMP
+leaves that mode, the assist turns the fan off if it still has the setting
+the assist applied; it does not turn off a different Sensibo setting. Unknown
+or unavailable KMP or Sensibo status defers action until a later check.
+
+The fan level is determined from Sensibo's fan-mode capabilities. If the device
+uses an unrecognized level name, set `SENSIBO_MAX_FAN_LEVEL` to the exact
+highest fixed level reported for that device. The setting is validated against
+its capabilities. Test mode only logs the actions it would take. Assist state
+is held in memory; after restarting, it does not turn off a pre-existing fan
+unless it observes KMP in `HÖGEFFEKT` first.
+
 ## Test mode
 
 Run the application without sending commands to KMP or Sensibo by setting

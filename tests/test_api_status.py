@@ -220,7 +220,7 @@ class KmpStatusTests(unittest.TestCase):
     def test_off_does_not_toggle_when_mode_is_unavailable(
         self, start_chrome, _login, _get_mode, click_start
     ):
-        with self.assertLogs(level="ERROR"):
+        with self.assertLogs(level="WARNING"):
             kmp.off()
         click_start.assert_not_called()
         start_chrome.return_value.quit.assert_called_once()

@@ -85,6 +85,71 @@ def on(mode="heat"):
     data = {"acState": {"on": True, "mode": mode}}
     return send_post_request(data)
 
+
+def fan_on(fan_level):
+    return send_post_request({
+        "acState": {"on": True, "mode": "fan", "fanLevel": fan_level}
+    })
+
+
+def get_fan_level():
+    try:
+        response = requests.get(
+            POD_URL,
+            params={'fields': 'remoteCapabilities', 'apiKey': SENSIBO_API_KEY},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (requests.RequestException, ValueError) as e:
+        logging.error("Could not retrieve Sensibo fan capabilities: %s", e)
+        return None
+
+    pod = _first_result(data, "fan capabilities")
+    capabilities = pod.get('remoteCapabilities') if pod else None
+    modes = capabilities.get('modes') if isinstance(capabilities, dict) else None
+    fan = modes.get('fan') if isinstance(modes, dict) else None
+    levels = fan.get('fanLevels') if isinstance(fan, dict) else None
+    if not isinstance(levels, list) or not levels or not all(
+        isinstance(level, str) for level in levels
+    ):
+        logging.warning("Sensibo fan speed capabilities are unavailable.")
+        return None
+
+    configured = os.getenv("SENSIBO_MAX_FAN_LEVEL")
+    if configured:
+        if configured in levels and configured.lower() != 'auto':
+            return configured
+        logging.error("Configured Sensibo maximum fan level is not supported.")
+        return None
+
+    priority = (
+        'turbo', 'powerful', 'strongest', 'strong', 'high', 'medium_high',
+        'medium', 'medium_low', 'low', 'quiet'
+    )
+    if any(level.lower() not in priority and level.lower() != 'auto' for level in levels):
+        logging.warning(
+            "Sensibo has unrecognized fan levels; set SENSIBO_MAX_FAN_LEVEL "
+            "to the highest supported level."
+        )
+        return None
+    for candidate in priority:
+        for level in levels:
+            if level.lower() == candidate:
+                return level
+    logging.warning("Sensibo has no supported fixed fan speed.")
+    return None
+
+
+def get_fan_state():
+    result = _first_result(status(), "AC state")
+    state = result.get('acState') if result else None
+    if not isinstance(state, dict) or not isinstance(state.get('on'), bool):
+        logging.warning("Sensibo fan state is unavailable.")
+        return None
+    return state
+
+
 def off():
     data = {"acState": {"on": False}}
     return send_post_request(data)

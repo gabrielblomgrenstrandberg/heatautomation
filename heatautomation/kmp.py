@@ -34,6 +34,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 USERNAME = os.getenv("KMP_USERNAME")
 PASSWORD = os.getenv("KMP_PASSWORD")
 PORTAL_URL = "http://portal.kmp-ab.se"
+RUNNING_MODES = frozenset({"LADDAR", "TÄNDNING", "UPPVÄRMNING", "HÖGEFFEKT"})
+IDLE_MODES = frozenset({"VILOLÄGE, SLÄCKER NED", "VILAR..."})
+OFF_MODES = frozenset({"AV", "AVSTÄNGD, SLÄCKER NED"})
 
 def start_chrome():
     try:
@@ -102,10 +105,30 @@ def click_start(driver):
         )
         button.click()
         logging.info("Power button clicked.")
+        return True
     except ElementClickInterceptedException:
         logging.error("Could not click the power button, something is blocking it.")
     except Exception as e:
         logging.error(f"Error while clicking the power button: {e}")
+    return False
+
+
+def can_turn_off(mode):
+    if mode in RUNNING_MODES:
+        logging.info("Pellet stove is running in mode %s; deferring shutdown.", mode)
+        return False
+    if mode in IDLE_MODES or mode in OFF_MODES:
+        return True
+    logging.warning("Cannot turn off pellet stove: mode %s is unavailable or unknown.", mode)
+    return False
+
+
+def can_turn_on(mode):
+    if mode in OFF_MODES or mode in RUNNING_MODES or mode in IDLE_MODES:
+        return True
+    logging.warning("Cannot turn on pellet stove: mode %s is unavailable or unknown.", mode)
+    return False
+
 
 def off():
     driver = start_chrome()
@@ -113,13 +136,13 @@ def off():
         login(driver)
         mode = get_mode(driver)
 
-        if not mode:
-            logging.error("Cannot turn off the pellet stove without a known mode.")
-        elif mode in ["AV", "AVSTÄNGD, SLÄCKER NED"]:
-            logging.info(f"Pellet stove is already off.")
-        else:
-            logging.info(f"Pellet stove is on, turning it off.")
-            click_start(driver)
+        if not can_turn_off(mode):
+            return False
+        if mode in OFF_MODES:
+            logging.info("Pellet stove is already off.")
+            return True
+        logging.info("Pellet stove is idle, turning it off.")
+        return click_start(driver)
     finally:
         if driver:
             driver.quit()
@@ -130,14 +153,15 @@ def on():
         login(driver)
         mode = get_mode(driver)
 
-        if mode in ["AV", "AVSTÄNGD, SLÄCKER NED"]:
-            click_start(driver)
-        elif mode in ["LADDAR", "TÄNDNING", "UPPVÄRMNING", "HÖGEFFEKT", "VILOLÄGE, SLÄCKER NED", "VILAR..."]:
-            logging.info(f"Pellet stove is already on in mode: {mode}")
-        else:
-            logging.warning(f"Warning, unknown mode: {mode}")
+        if not can_turn_on(mode):
+            return False
+        if mode in OFF_MODES:
+            return click_start(driver)
+        logging.info("Pellet stove is already on in mode: %s", mode)
+        return True
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
 
 def pelletstove_error():
     driver = start_chrome()
