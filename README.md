@@ -1,6 +1,17 @@
 # heatautomation
 A script for selecting the best heat source based on spot price and temperature
 
+## Project layout
+
+* `heatautomation/integrations/`: Sensibo, KMP, Tibber, weather and Solis clients.
+* `heatautomation/control/`: heating-source selection.
+* `heatautomation/learning/`: collection, database, features, training and prediction.
+* `heatautomation/storage/`: the existing CSV logger.
+* `tests/`: tests grouped by the corresponding responsibilities.
+
+Run the test suite from the repository root with
+`python -m unittest discover -s tests`.
+
 ## Configuration
 
 Edit [heatautomation/heatautomation.conf](./heatautomation/heatautomation.conf) for location,
@@ -121,7 +132,7 @@ The interface takes an explicit weather and heating scenario; it never issues
 commands or participates in source selection. For example:
 
 ```python
-from heatautomation.thermal_prediction import ThermalPredictor, PredictionUnavailable
+from heatautomation.learning.prediction import ThermalPredictor, PredictionUnavailable
 
 recent = [20.0, 20.0, 19.9, 19.9, 19.9, 19.8, 19.8]  # 5-minute readings, oldest first
 outdoor = [2.0] * 72  # replace with forecast temperatures for each 5-minute step
@@ -209,8 +220,20 @@ remove it to avoid a startup warning. **Only the config file controls test mode.
 
 Use the **Heat Automation** launch configuration in VS Code to run or debug
 the app with the project virtual environment. To run without VS Code's debugger,
-use `.venv\Scripts\python.exe heatautomation\main.py` from the repository root.
+use `.venv\Scripts\python.exe -m heatautomation.main` from the repository root.
 PowerShell script activation is optional.
+
+The root `Dockerfile` uses the same module entry point. Build it with the
+repository root as the Docker build context. Individual integration command-line
+modules must likewise be run with `python -m heatautomation.integrations.kmp`
+or `python -m heatautomation.integrations.weather`, rather than by file path.
+Imports have moved into `heatautomation.integrations`, `heatautomation.control`,
+`heatautomation.learning`, and `heatautomation.storage`; update any external
+scripts using the old top-level module paths. In particular,
+`heatautomation.thermal_prediction` is now `heatautomation.learning.prediction`,
+and the other `thermal_*` modules have similarly moved into `learning` without
+the `thermal_` prefix. Existing SQLite databases and joblib model paths do not
+need to move.
 
 Keep service credentials in the ignored `heatautomation/.env` file and never
 paste them into chats or commit them. If credentials have been exposed, revoke

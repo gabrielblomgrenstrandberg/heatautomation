@@ -5,14 +5,8 @@ import math
 import time
 from datetime import datetime, timezone
 
-if __package__:
-    from . import config, kmp, sensibo, tibber, weather
-else:
-    import config
-    import kmp
-    import sensibo
-    import tibber
-    import weather
+from .. import config
+from ..integrations import kmp, sensibo, tibber, weather
 
 
 def _number(value):

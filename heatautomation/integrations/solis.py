@@ -23,10 +23,7 @@ import time
 import base64
 import logging
 
-if __package__:
-    from . import config
-else:
-    import config
+from .. import config
 
 KEY_ID = config.SOLIS_KEY_ID
 KEY_SECRET = config.SOLIS_KEY_SECRET

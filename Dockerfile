@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# file: Dockerfile – Dockerfile for the Heat Automation project
+# Dockerfile for the Heat Automation project
 
 # Use RHEL 9 Universal Base Image minimal
 FROM registry.access.redhat.com/ubi9/ubi-minimal
@@ -78,4 +78,4 @@ COPY . /app
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 # Default command to run your app
-CMD ["python3", "heatautomation/main.py"]
+CMD ["python3", "-m", "heatautomation.main"]

@@ -16,17 +16,15 @@
 
 # main.py - Main script for the Heat Automation program.
 
-import tibber
-import sensibo
-import kmp
-import weather
 import time
-import config
-import heating_model
 import threading
-from datalogger import log_data
 from datetime import datetime, timedelta
 import logging
+
+from . import config
+from .control import heating_model
+from .integrations import kmp, sensibo, tibber, weather
+from .storage.datalogger import log_data
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -450,9 +448,9 @@ def grid_monitor_loop():
 def thermal_monitor_loop():
     # Imports are deferred so a monitoring dependency cannot prevent heat control.
     try:
-        import thermal_collection
-        import thermal_database
-        import thermal_training
+        from .learning import collection as thermal_collection
+        from .learning import database as thermal_database
+        from .learning import training as thermal_training
     except ImportError:
         logging.exception("Thermal monitoring unavailable: dependency import failed.")
         return

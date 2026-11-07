@@ -21,10 +21,7 @@ import json
 import logging
 import sys
 import websocket
-if __package__:
-    from .config import TIBBER_API_KEY
-else:
-    from config import TIBBER_API_KEY
+from ..config import TIBBER_API_KEY
 URL = "https://api.tibber.com/v1-beta/gql"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

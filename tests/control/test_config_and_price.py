@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from test_heat_switch import main
+from heatautomation import main
 
 
 class SpotPriceLimitTests(unittest.TestCase):
@@ -55,7 +55,7 @@ class SpotPriceLimitTests(unittest.TestCase):
 
 class ConfigurationTests(unittest.TestCase):
     def test_inline_comments_on_settings_and_capacity_rows(self):
-        source = Path(__file__).resolve().parents[1] / "heatautomation"
+        source = Path(__file__).resolve().parents[2] / "heatautomation"
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
             shutil.copyfile(source / "config.py", target / "config.py")
@@ -96,7 +96,7 @@ class ConfigurationTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, "-c",
              "import config; print(config.spotPriceLimit, config.TEST_MODE, config.FAN_ASSIST_ENABLED)"],
-            cwd=str(Path(__file__).resolve().parents[1] / "heatautomation"),
+            cwd=str(Path(__file__).resolve().parents[2] / "heatautomation"),
             env=env, capture_output=True, text=True,
         )
 
@@ -115,7 +115,7 @@ class ConfigurationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("ValueError", result.stderr)
 
-    def test_standalone_modules_load_configuration_without_tibber(self):
+    def test_integration_modules_load_configuration_without_tibber(self):
         env = os.environ.copy()
         env.update({
             "KMP_USERNAME": "test-user",
@@ -125,17 +125,17 @@ class ConfigurationTests(unittest.TestCase):
         })
         result = subprocess.run(
             [sys.executable, "-c",
-             "import kmp, sensibo, solis; "
+             "from heatautomation.integrations import kmp, sensibo, solis; "
              "assert kmp.USERNAME == 'test-user'; "
              "assert sensibo.DEVICE_ID == 'test-device'; "
              "assert solis.STATION_ID == 'test-station'"],
-            cwd=str(Path(__file__).resolve().parents[1] / "heatautomation"),
+            cwd=str(Path(__file__).resolve().parents[2]),
             env=env, capture_output=True, text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_conf_file_drives_settings_and_environment_takes_precedence(self):
-        source = Path(__file__).resolve().parents[1] / "heatautomation"
+        source = Path(__file__).resolve().parents[2] / "heatautomation"
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
             shutil.copyfile(source / "config.py", target / "config.py")
@@ -159,11 +159,14 @@ class ConfigurationTests(unittest.TestCase):
             result = subprocess.run(command, cwd=directory, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "1.75 False True 58.0 (1.0, 7.5)")
-            for path in source.glob("*.py"):
-                shutil.copyfile(path, target / path.name)
+            shutil.copytree(source, target / "heatautomation",
+                            ignore=shutil.ignore_patterns(".env", "__pycache__"))
+            (target / "heatautomation" / "heatautomation.conf").write_text(
+                contents, encoding="utf-8"
+            )
             decision = subprocess.run(
                 [sys.executable, "-c",
-                 "import main; assert main.decide_heating_source(0, 1.75)[0] == 'heatpump'; "
+                 "from heatautomation import main; assert main.decide_heating_source(0, 1.75)[0] == 'heatpump'; "
                  "assert main.decide_heating_source(0, 1.76)[0] == 'pelletstove'"],
                 cwd=directory, env=env, capture_output=True, text=True,
             )
@@ -175,11 +178,13 @@ class ConfigurationTests(unittest.TestCase):
             self.assertIn("HEATAUTOMATION_TEST_MODE is ignored", result.stderr)
 
     def test_test_mode_conf_overrides_legacy_env_and_dotenv(self):
-        source = Path(__file__).resolve().parents[1] / "heatautomation"
+        source = Path(__file__).resolve().parents[2] / "heatautomation"
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
             for path in source.glob("*.py"):
                 shutil.copyfile(path, target / path.name)
+            shutil.copytree(source, target / "heatautomation",
+                            ignore=shutil.ignore_patterns(".env", "__pycache__"))
             contents = (source / "heatautomation.conf").read_text(encoding="utf-8")
             env = os.environ.copy()
             env.pop("HEATAUTOMATION_TEST_MODE", None)
@@ -192,6 +197,9 @@ class ConfigurationTests(unittest.TestCase):
                     (target / ".env").write_text(
                         "HEATAUTOMATION_TEST_MODE=" + legacy, encoding="utf-8"
                     )
+                    shutil.copyfile(target / "heatautomation.conf",
+                                    target / "heatautomation" / "heatautomation.conf")
+                    shutil.copyfile(target / ".env", target / "heatautomation" / ".env")
                     for use_env in (False, True):
                         test_env = env.copy()
                         if use_env:
@@ -204,7 +212,7 @@ class ConfigurationTests(unittest.TestCase):
                         self.assertEqual(result.stdout.strip(), expected)
                         self.assertIn("HEATAUTOMATION_TEST_MODE is ignored", result.stderr)
                         command = (
-                            "from unittest.mock import patch; import main; "
+                            "from unittest.mock import patch; from heatautomation import main; "
                             "k=patch.object(main.kmp, 'on', return_value=True); "
                             "s=patch.object(main.sensibo, 'off', return_value={{'ok': True}}); "
                             "r=patch.object(main.kmp, 'get_status', return_value={{'mode': 'AV'}}); "
@@ -219,7 +227,7 @@ class ConfigurationTests(unittest.TestCase):
                         self.assertEqual(integration.returncode, 0, integration.stderr)
 
     def test_missing_and_invalid_conf_fail_at_startup(self):
-        source = Path(__file__).resolve().parents[1] / "heatautomation"
+        source = Path(__file__).resolve().parents[2] / "heatautomation"
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
             shutil.copyfile(source / "config.py", target / "config.py")

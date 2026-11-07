@@ -5,10 +5,7 @@ import math
 import joblib
 import pandas as pd
 
-if __package__:
-    from .thermal_features import FEATURES
-else:
-    from thermal_features import FEATURES
+from .features import FEATURES
 
 
 class PredictionUnavailable(ValueError):

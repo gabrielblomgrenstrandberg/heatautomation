@@ -7,8 +7,11 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from heatautomation import thermal_collection, thermal_database, thermal_features
-from heatautomation import thermal_prediction, thermal_training
+from heatautomation.learning import collection as thermal_collection
+from heatautomation.learning import database as thermal_database
+from heatautomation.learning import features as thermal_features
+from heatautomation.learning import prediction as thermal_prediction
+from heatautomation.learning import training as thermal_training
 
 
 def history(count=900):

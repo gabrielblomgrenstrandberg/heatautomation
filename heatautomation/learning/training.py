@@ -10,10 +10,7 @@ import numpy as np
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-if __package__:
-    from .thermal_features import FEATURES, training_rows
-else:
-    from thermal_features import FEATURES, training_rows
+from .features import FEATURES, training_rows
 
 
 MIN_ROWS = 120
