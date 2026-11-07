@@ -22,6 +22,7 @@ import kmp
 import weather
 import time
 import config
+import heating_model
 import threading
 from datalogger import log_data
 from datetime import datetime, timedelta
@@ -36,6 +37,7 @@ FAN_ASSIST_ENABLED = config.FAN_ASSIST_ENABLED
 CONTROL_LOCK = threading.RLock()
 
 TEST_MODE = config.TEST_MODE
+advanced_heat_required = config.COST_CONTROL_ENABLED
 
 # Retry helper function with exponential backoff
 def retry_function(func, retries=3, delay=5):
@@ -145,7 +147,10 @@ class FanAssist:
                 return
 
             if mode == "HÖGEFFEKT":
-                self._start_or_maintain()
+                if config.COST_CONTROL_ENABLED and advanced_heat_required:
+                    logging.info("Fan assist suppressed while heat-pump heating is required.")
+                else:
+                    self._start_or_maintain()
             elif self.active:
                 self._stop()
 
@@ -186,6 +191,136 @@ class FanAssist:
 
 
 fan_assist = FanAssist()
+
+
+class CostController:
+    def __init__(self):
+        self.state = None
+        self.changed_at = {}
+        self.uncertain = False
+
+    def observe(self):
+        stove = kmp.get_status()
+        pump = sensibo.getSystemStatus()
+        if not stove or not pump:
+            logging.warning("Cost control deferred: device status is unavailable.")
+            self.uncertain = True
+            return None
+        mode = stove.get("mode")
+        power = pump.get("is_on")
+        if mode not in kmp.RUNNING_MODES | kmp.IDLE_MODES | kmp.OFF_MODES:
+            logging.warning("Cost control deferred: unknown KMP mode %s.", mode)
+            self.uncertain = True
+            return None
+        if not isinstance(power, bool) or (power and pump.get("mode") not in ("heat", "fan")):
+            logging.warning("Cost control deferred: Sensibo power or mode is unknown.")
+            self.uncertain = True
+            return None
+        return {
+            "pelletstove": mode not in kmp.OFF_MODES,
+            "heatpump": power and pump.get("mode") == "heat",
+        }
+
+    def synchronize(self, observed, now):
+        global advanced_heat_required
+        if self.state is None:
+            self.state = observed.copy()
+            self.changed_at = {source: now for source in observed}
+        elif not TEST_MODE:
+            for source in observed:
+                if observed[source] != self.state[source]:
+                    logging.warning("Detected external %s state change.", source)
+                    self.state[source] = observed[source]
+                    self.changed_at[source] = now
+        if self.uncertain:
+            self.changed_at = {source: now for source in observed}
+            self.uncertain = False
+        advanced_heat_required = self.state["heatpump"]
+
+    def current(self):
+        pump = self.state["heatpump"]
+        stove = self.state["pelletstove"]
+        if pump and stove:
+            return "combined"
+        if pump:
+            return "heatpump"
+        if stove:
+            return "pelletstove"
+        return "none"
+
+    def transition(self, desired, now):
+        global advanced_heat_required
+        wanted = {
+            "heatpump": desired in ("heatpump", "combined"),
+            "pelletstove": desired in ("pelletstove", "combined"),
+        }
+        # Start replacement sources before stopping any currently running source.
+        for turning_on in (True, False):
+            for source in ("pelletstove", "heatpump"):
+                if wanted[source] != turning_on or self.state[source] == turning_on:
+                    continue
+                elapsed = now - self.changed_at[source]
+                minimum = config.MINIMUM_SWITCH_INTERVAL_SECONDS
+                if not turning_on:
+                    minimum = max(minimum, config.MINIMUM_RUNTIME_SECONDS)
+                if elapsed < minimum:
+                    logging.info("Deferring %s change for %.0f seconds.", source, minimum - elapsed)
+                    return False
+                if (source == "heatpump" and turning_on and desired == "heatpump"
+                        and self.state["pelletstove"]):
+                    status = kmp.get_status()
+                    if not kmp.can_turn_off(status.get("mode") if status else None):
+                        logging.warning("Heat-pump switch deferred until the stove is idle.")
+                        return False
+                if TEST_MODE:
+                    if source == "pelletstove":
+                        status = kmp.get_status()
+                        mode = status.get("mode") if status else None
+                        safe = kmp.can_turn_on(mode) if turning_on else kmp.can_turn_off(mode)
+                        if not safe:
+                            return False
+                    logging.info("TEST MODE: would turn %s %s.", "on" if turning_on else "off", source)
+                elif source == "pelletstove":
+                    if not retry_function(kmp.on if turning_on else kmp.off):
+                        logging.warning("Cost control: pellet stove command failed or was deferred.")
+                        return False
+                else:
+                    command = sensibo.on if turning_on else sensibo.off
+                    if retry_function(command) is None:
+                        logging.warning("Cost control: heat pump command failed.")
+                        return False
+                self.state[source] = turning_on
+                self.changed_at[source] = now
+                advanced_heat_required = self.state["heatpump"]
+                if turning_on and any(
+                    self.state[name] and not wanted[name] for name in wanted
+                ):
+                    logging.info("Waiting until the next cycle before stopping the previous source.")
+                    return False
+        return True
+
+
+def cost_control_cycle(controller, temperature, price):
+    global advanced_heat_required
+    with CONTROL_LOCK:
+        observed = controller.observe()
+        if observed is None:
+            advanced_heat_required = True
+            return None
+        now = time.monotonic()
+        controller.synchronize(observed, now)
+        capacity = get_effective_heating_capacity(temperature)
+        desired, delivered_capacity = heating_model.select(
+            temperature, price, capacity, config.PELLET_STOVE_CAPACITY,
+            config.PELLET_COST_PER_KWH, config.COP_BY_TEMPERATURE,
+            config.DEMAND_BY_TEMPERATURE, config.COST_HYSTERESIS,
+            controller.current(), config.spotPriceLimit,
+        )
+        logging.info("Cost-based selection: %s.", desired)
+        if not controller.transition(desired, now):
+            logging.warning("Cost-based transition deferred; current state is %s.", controller.current())
+            return None
+        return desired, delivered_capacity
 
 
 def fan_monitor_loop():
@@ -315,6 +450,7 @@ def grid_monitor_loop():
 # Main program loop
 def main_loop():
     current_heat_type = "none"
+    cost_controller = CostController() if config.COST_CONTROL_ENABLED else None
     threading.Thread(
         target=grid_monitor_loop,
         name="tibber-grid-monitor",
@@ -344,6 +480,14 @@ def main_loop():
         if outdoor_temp is None:
             logging.warning("No outdoor temperature available. Skipping cycle.")
             time.sleep(30)
+            continue
+
+        if cost_controller is not None:
+            selection = cost_control_cycle(cost_controller, outdoor_temp, spot_price)
+            if selection is not None:
+                heating_type, heating_capacity = selection
+                log_data(datetime.now(), spot_price, outdoor_temp, heating_type, heating_capacity)
+            wait_until_next_quarter()
             continue
 
         heating_type, heating_capacity = decide_heating_source(outdoor_temp, spot_price)

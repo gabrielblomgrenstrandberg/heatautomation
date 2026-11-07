@@ -128,3 +128,42 @@ HEAT_PUMP_CAPACITY_BELOW_MINIMUM = _number(
     "heating", "heat_pump_capacity_below_minimum", positive=True
 )
 HEAT_PUMP_CAPACITY_BY_TEMPERATURE = _capacities()
+
+
+def _curve(name, allow_zero=False):
+    rows = _value("cost_control", name).splitlines()
+    result = []
+    for row in rows:
+        try:
+            parts = row.split(",")
+            if len(parts) != 2:
+                raise ValueError("expected temperature, value")
+            temperature, value = (float(part.strip()) for part in parts)
+        except ValueError as error:
+            raise ValueError("Invalid [{}] {} row: {!r}".format(
+                "cost_control", name, row
+            )) from error
+        if (not math.isfinite(temperature) or not math.isfinite(value)
+                or value < 0 or (not allow_zero and value == 0)
+                or (result and temperature >= result[-1][0])):
+            raise ValueError("Invalid or unordered [cost_control] {} row".format(name))
+        result.append((temperature, value))
+    if not result:
+        raise ValueError("[cost_control] {} requires at least one row".format(name))
+    return tuple(result)
+
+
+COST_CONTROL_ENABLED = _boolean("cost_control", "enabled")
+if COST_CONTROL_ENABLED:
+    PELLET_COST_PER_KWH = _number("cost_control", "pellet_cost_per_kwh", positive=True)
+    COP_BY_TEMPERATURE = _curve("cop_by_temperature")
+    DEMAND_BY_TEMPERATURE = _curve("demand_by_temperature", allow_zero=True)
+    COST_HYSTERESIS = _number("cost_control", "cost_hysteresis", non_negative=True)
+    if COST_HYSTERESIS >= 1:
+        raise ValueError("[cost_control] cost_hysteresis must be less than 1")
+    MINIMUM_RUNTIME_SECONDS = _number(
+        "cost_control", "minimum_runtime_minutes", non_negative=True
+    ) * 60
+    MINIMUM_SWITCH_INTERVAL_SECONDS = _number(
+        "cost_control", "minimum_switch_interval_minutes", non_negative=True
+    ) * 60

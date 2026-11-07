@@ -29,6 +29,46 @@ cost-and-capacity calculation. The override also bypasses the normal minimum
 heat-pump capacity rule, so choose a limit appropriate for your system.
 Existing KMP mode and switching safeguards still apply.
 
+## Optional cost-based heating control
+
+The `[cost_control]` section is disabled by default because this repository
+does not have measured COP, heating demand, or pellet cost for your home.
+Before setting `enabled = true`, supply:
+
+* `pellet_cost_per_kwh`: your actual cost in SEK per delivered kWh of heat,
+  including fuel, efficiency losses, and any relevant stove electricity.
+* `cop_by_temperature`: measured or manufacturer COP values for your heat pump
+  at representative outdoor temperatures and operating conditions.
+* `demand_by_temperature`: estimated heat demand in kW at those temperatures.
+  Calibrate it to your building; it is not measured by this application.
+
+Enter each curve as `temperature, value` rows ordered from warmest to coldest.
+Values are linearly interpolated and clamped at the endpoints. The existing
+capacity table remains a stepwise estimate, and `pellet_stove_capacity` is
+the estimated stove capacity. The model compares Tibber total price / COP with
+the pellet cost, selects a single source when it can meet demand economically,
+and selects `combined` when needed or cheaper. Neither device is modulated by
+this application: mixed costs assume an ideal allocation and are estimates.
+If estimated demand exceeds combined capacity, both sources are requested and
+a warning is logged. A zero demand requests both sources off.
+
+`cost_hysteresis` is a fraction (0.10 means 10% savings required); it applies
+only when the current source can satisfy demand. The configurable minimum runtime
+and minimum switching interval apply independently to each device. On startup or
+after status loss, their timers restart conservatively; settings are checked on
+the normal quarter-hour cycle. Starting a replacement is followed by a later
+status check before stopping the previous source. If a command or status check
+fails, or KMP is in a protected running mode, the transition is deferred.
+The existing `spotPriceLimit` overrides economic selection, but not demand
+capacity, timers or KMP safeguards. If the preferred source cannot meet demand,
+combined operation is selected.
+
+Fan assist is suppressed whenever cost control needs heat from Sensibo or cannot
+determine device status, so fan mode cannot replace heat-pump operation. The
+controller uses provider-reported status and command acknowledgements, not
+independent physical-output confirmation; safety interlocks and thermostat
+controls remain necessary.
+
 ## Weather forecast
 
 SMHI's current public forecast API does not provide a general-weather forecast
