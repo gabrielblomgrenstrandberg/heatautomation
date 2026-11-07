@@ -1,14 +1,40 @@
 # heatautomation
 A script for selecting the best heat source based on spot price and temperature
 
+## Configuration
+
+Edit [heatautomation/heatautomation.conf](./heatautomation/heatautomation.conf) for location,
+heating model, logging, polling, and operating settings. The file centralizes
+the application settings in INI format; restart the application after changing them.
+The loader requires this file alongside the Python modules and reports invalid
+or missing settings at startup. Heat-pump capacity rows are `temperature, capacity`
+pairs ordered from highest to lowest temperature.
+Keep credentials in the ignored `heatautomation/.env` file or in environment
+variables, never in the tracked configuration file. Credentials and the
+documented environment variables override their defaults in the configuration.
+The `.env` file is loaded regardless of which module is run.
+Existing variables are `TIBBER_API_KEY`, `SENSIBO_DEVICE_ID`, `SENSIBO_API_KEY`,
+`KMP_USERNAME`, `KMP_PASSWORD`, `SOLIS_KEY_ID`, `SOLIS_KEY_SECRET`,
+`SOLIS_STATION_ID`, `BASE_URL` (Solis), `CHROME_BINARY_PATH`,
+`CHROMEDRIVER_PATH`, `HEATAUTOMATION_TEST_MODE`, `HEATAUTOMATION_FAN_ASSIST`,
+`SENSIBO_MAX_FAN_LEVEL`, and `SPOT_PRICE_LIMIT`.
+
+Set `spotPriceLimit` to a positive price in SEK/kWh to select KMP when the
+Tibber total spot price is above the limit, and Sensibo when it is at or below
+the limit. `SPOT_PRICE_LIMIT` in the environment or `.env` overrides this
+setting. The default `0` disables the override and keeps the normal
+cost-and-capacity calculation. The override also bypasses the normal minimum
+heat-pump capacity rule, so choose a limit appropriate for your system.
+Existing KMP mode and switching safeguards still apply.
+
 ## Weather forecast
 
 SMHI's current public forecast API does not provide a general-weather forecast
 with all of these fields, so the `weather` module uses Open-Meteo as an
 alternative. It fetches hourly temperature, wind speed, relative humidity,
-surface pressure, and rain forecasts for the next 36 hours.
-The default location is Hagge, Sweden. Change `WEATHER_LATITUDE` and
-`WEATHER_LONGITUDE` in [heatautomation/config.py](./heatautomation/config.py)
+surface pressure, and rain forecasts for the next 36 hours by default.
+The default location is Hagge, Sweden. Change `latitude` and
+`longitude` in [heatautomation/heatautomation.conf](./heatautomation/heatautomation.conf)
 to use another location. `get_forecast()` returns a list of hourly readings;
 `get_outdoor_temp()` remains available for the heating controller.
 
@@ -27,7 +53,8 @@ the heat pump is left unchanged and the switch is retried on the next cycle.
 
 ## Pellet stove fan assist
 
-Set `HEATAUTOMATION_FAN_ASSIST=true` to enable the optional fan assist (disabled
+Set `fan_assist_enabled = true` in the configuration, or
+`HEATAUTOMATION_FAN_ASSIST=true` in the environment or `.env`, to enable the optional fan assist (disabled
 by default). It checks KMP once per minute and, while its mode is `HÖGEFFEKT`,
 sets Sensibo to fan mode at its highest supported fixed fan level. When KMP
 leaves that mode, the assist turns the fan off if it still has the setting
@@ -44,8 +71,9 @@ unless it observes KMP in `HÖGEFFEKT` first.
 ## Test mode
 
 Run the application without sending commands to KMP or Sensibo by setting
-`HEATAUTOMATION_TEST_MODE=true` in the environment (or in the `.env` file) before
-starting it. Test mode is enabled by default. In this mode, the application
+`test_mode = true` in the configuration, or `HEATAUTOMATION_TEST_MODE=true` in the
+environment (or in the `.env` file) before starting it. Test mode is enabled by
+default. In this mode, the application
 logs the device actions it would take, attempts read-only status checks for
 Sensibo and KMP, and does not change device settings. Set the variable to
 `false` to enable normal operation.

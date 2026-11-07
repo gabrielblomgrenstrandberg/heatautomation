@@ -21,7 +21,7 @@ import sensibo
 import kmp
 import weather
 import time
-import os
+import config
 import threading
 from datalogger import log_data
 from datetime import datetime, timedelta
@@ -30,16 +30,12 @@ import logging
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-GRID_POLL_INTERVAL_SECONDS = 5 * 60
-FAN_POLL_INTERVAL_SECONDS = 60
-FAN_ASSIST_ENABLED = os.getenv("HEATAUTOMATION_FAN_ASSIST", "false").strip().lower() in {
-    "1", "true", "yes", "on"
-}
+GRID_POLL_INTERVAL_SECONDS = config.GRID_POLL_INTERVAL_SECONDS
+FAN_POLL_INTERVAL_SECONDS = config.FAN_POLL_INTERVAL_SECONDS
+FAN_ASSIST_ENABLED = config.FAN_ASSIST_ENABLED
 CONTROL_LOCK = threading.RLock()
 
-TEST_MODE = os.getenv("HEATAUTOMATION_TEST_MODE", "true").strip().lower() in {
-    "1", "true", "yes", "on"
-}
+TEST_MODE = config.TEST_MODE
 
 # Retry helper function with exponential backoff
 def retry_function(func, retries=3, delay=5):
@@ -70,17 +66,13 @@ def wait_until_next_quarter():
 
 # Calculate heating capacity based on outdoor temperature
 def get_effective_heating_capacity(outdoor_temp):
-    if outdoor_temp >= 0:
-        return 6.5
-    elif outdoor_temp >= -12.5:
-        return 4.0
-    elif outdoor_temp >= -17.5:
-        return 3.6
-    else:
-        return 2.6
+    for minimum_temperature, capacity in config.HEAT_PUMP_CAPACITY_BY_TEMPERATURE:
+        if outdoor_temp >= minimum_temperature:
+            return capacity
+    return config.HEAT_PUMP_CAPACITY_BELOW_MINIMUM
 
 # Calculate cost based on SCOP
-def calculate_energy_cost_with_scop(spot_price, heating_capacity, scop=3.8):
+def calculate_energy_cost_with_scop(spot_price, heating_capacity, scop=config.HEAT_PUMP_SCOP):
     energy_used = heating_capacity / scop
     return energy_used * spot_price
 
@@ -209,21 +201,38 @@ def fan_monitor_loop():
 
 
 # Unified decision logic for heating source
-def decide_heating_source(outdoor_temp, spot_price, max_price_threshold=3.0, scop=3.8):
+def decide_heating_source(
+    outdoor_temp, spot_price, max_price_threshold=config.MAX_PRICE_THRESHOLD,
+    scop=config.HEAT_PUMP_SCOP
+):
     heating_capacity = get_effective_heating_capacity(outdoor_temp)
-    adjusted_threshold = max_price_threshold - 0.94875
+    if config.spotPriceLimit > 0:
+        if spot_price > config.spotPriceLimit:
+            logging.info(
+                "Pellet stove selected: spot price %.4f SEK/kWh exceeds "
+                "the configured limit %.4f SEK/kWh.", spot_price, config.spotPriceLimit
+            )
+            return "pelletstove", config.PELLET_STOVE_CAPACITY
+        logging.info(
+            "Heat pump selected: spot price %.4f SEK/kWh is at or below "
+            "the configured limit %.4f SEK/kWh.", spot_price, config.spotPriceLimit
+        )
+        return "heatpump", heating_capacity
+
+    adjusted_threshold = max_price_threshold - config.PELLET_PRICE_ADJUSTMENT
     electricity_cost = calculate_energy_cost_with_scop(spot_price, heating_capacity, scop)
 
     cost_is_too_high = electricity_cost > adjusted_threshold
-    capacity_is_too_low = heating_capacity < 3.0
+    capacity_is_too_low = heating_capacity < config.MIN_HEAT_PUMP_CAPACITY
     if not cost_is_too_high and not capacity_is_too_low:
         logging.info(
             "Heat pump selected: estimated electricity cost %.2f SEK is within "
-            "the %.2f SEK threshold and capacity %.1f kW meets the 3.0 kW minimum "
+            "the %.2f SEK threshold and capacity %.1f kW meets the %.1f kW minimum "
             "at %s°C.",
             electricity_cost,
             adjusted_threshold,
             heating_capacity,
+            config.MIN_HEAT_PUMP_CAPACITY,
             outdoor_temp
         )
         return "heatpump", heating_capacity
@@ -236,15 +245,15 @@ def decide_heating_source(outdoor_temp, spot_price, max_price_threshold=3.0, sco
         )
     if capacity_is_too_low:
         reasons.append(
-            "heating capacity %.1f kW is below the 3.0 kW minimum"
-            % heating_capacity
+            "heating capacity %.1f kW is below the %.1f kW minimum"
+            % (heating_capacity, config.MIN_HEAT_PUMP_CAPACITY)
         )
     logging.info(
         "Pellet stove selected at %s°C because %s.",
         outdoor_temp,
         " and ".join(reasons)
     )
-    return "pelletstove", 5.0
+    return "pelletstove", config.PELLET_STOVE_CAPACITY
 
 # System availability check
 def check_systems():

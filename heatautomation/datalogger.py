@@ -20,7 +20,10 @@ import csv
 from datetime import datetime
 import os
 
-LOG_FILE = "heating_data_log.csv"
+if __package__:
+    from .config import LOG_FILE
+else:
+    from config import LOG_FILE
 
 def log_data(timestamp, spot_price, outdoor_temp, heat_source, heating_capacity):
     file_exists = os.path.isfile(LOG_FILE)

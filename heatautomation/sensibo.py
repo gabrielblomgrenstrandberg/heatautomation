@@ -16,15 +16,19 @@
 
 # module: sensibo.py – A module for interacting with the Sensibo API to control air conditioning units (heat pump).
 
-import os
 import requests
 import logging
 
+if __package__:
+    from . import config
+else:
+    import config
+
 # Static global variables
-DEVICE_ID = os.getenv("SENSIBO_DEVICE_ID")
+DEVICE_ID = config.SENSIBO_DEVICE_ID
 POD_URL = f"https://home.sensibo.com/api/v2/pods/{DEVICE_ID}"
 URL = f"{POD_URL}/acStates"
-SENSIBO_API_KEY = os.getenv("SENSIBO_API_KEY")
+SENSIBO_API_KEY = config.SENSIBO_API_KEY
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -116,7 +120,7 @@ def get_fan_level():
         logging.warning("Sensibo fan speed capabilities are unavailable.")
         return None
 
-    configured = os.getenv("SENSIBO_MAX_FAN_LEVEL")
+    configured = config.SENSIBO_MAX_FAN_LEVEL
     if configured:
         if configured in levels and configured.lower() != 'auto':
             return configured

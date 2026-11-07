@@ -1,4 +1,3 @@
-import os
 import unittest
 from unittest.mock import Mock, patch
 
@@ -14,29 +13,29 @@ class FanCapabilityTests(unittest.TestCase):
             }}}}
         }
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.object(main.sensibo.config, "SENSIBO_MAX_FAN_LEVEL", None)
     @patch.object(main.sensibo.requests, "get")
     def test_selects_strong_over_high_and_auto(self, get):
         get.return_value = self.response
         self.assertEqual(main.sensibo.get_fan_level(), "strong")
         self.assertEqual(get.call_args.kwargs["params"]["fields"], "remoteCapabilities")
 
-    @patch.dict(os.environ, {"SENSIBO_MAX_FAN_LEVEL": "high"})
+    @patch.object(main.sensibo.config, "SENSIBO_MAX_FAN_LEVEL", "high")
     @patch.object(main.sensibo.requests, "get")
     def test_configured_level_must_be_supported(self, get):
         get.return_value = self.response
         self.assertEqual(main.sensibo.get_fan_level(), "high")
-        os.environ["SENSIBO_MAX_FAN_LEVEL"] = "invalid"
+        main.sensibo.config.SENSIBO_MAX_FAN_LEVEL = "invalid"
         self.assertIsNone(main.sensibo.get_fan_level())
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.object(main.sensibo.config, "SENSIBO_MAX_FAN_LEVEL", None)
     @patch.object(main.sensibo.requests, "get")
     def test_unknown_capabilities_do_not_guess(self, get):
         get.return_value = self.response
         levels = self.response.json.return_value["result"]["remoteCapabilities"]["modes"]["fan"]["fanLevels"]
         levels.append("custom")
         self.assertIsNone(main.sensibo.get_fan_level())
-        os.environ["SENSIBO_MAX_FAN_LEVEL"] = "custom"
+        main.sensibo.config.SENSIBO_MAX_FAN_LEVEL = "custom"
         self.assertEqual(main.sensibo.get_fan_level(), "custom")
 
     @patch.object(main.sensibo, "send_post_request", return_value={"result": "ok"})

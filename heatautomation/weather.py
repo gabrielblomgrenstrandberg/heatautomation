@@ -21,18 +21,15 @@ import logging
 import requests
 
 if __package__:
-    from .config import WEATHER_LATITUDE, WEATHER_LONGITUDE
+    from .config import WEATHER_LATITUDE, WEATHER_LONGITUDE, WEATHER_TIMEZONE, FORECAST_HOURS
 else:
-    from config import WEATHER_LATITUDE, WEATHER_LONGITUDE
+    from config import WEATHER_LATITUDE, WEATHER_LONGITUDE, WEATHER_TIMEZONE, FORECAST_HOURS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
-FORECAST_HOURS = 36
-
-
 def get_forecast():
-    """Fetch hourly weather forecasts for the next 36 hours.
+    """Fetch the configured number of hourly weather forecasts.
 
     Returns a list of hourly readings with time, temperature (C), wind speed
     (km/h), relative humidity (%), surface pressure (hPa), and rain (mm).
@@ -45,7 +42,7 @@ def get_forecast():
             "surface_pressure,rain"
         ),
         "forecast_hours": FORECAST_HOURS,
-        "timezone": "Europe/Stockholm",
+        "timezone": WEATHER_TIMEZONE,
     }
 
     try:

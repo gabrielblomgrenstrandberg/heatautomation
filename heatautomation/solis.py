@@ -20,17 +20,18 @@ import requests
 import hashlib
 import hmac
 import time
-import os
 import base64
-from dotenv import load_dotenv
 import logging
 
-# Ladda miljövariabler
-load_dotenv()
-KEY_ID = os.getenv("SOLIS_KEY_ID", "")
-KEY_SECRET = os.getenv("SOLIS_KEY_SECRET", "")
-STATION_ID = os.getenv("SOLIS_STATION_ID", "")
-BASE_URL = os.getenv("BASE_URL", "https://api.soliscloud.com:13333")
+if __package__:
+    from . import config
+else:
+    import config
+
+KEY_ID = config.SOLIS_KEY_ID
+KEY_SECRET = config.SOLIS_KEY_SECRET
+STATION_ID = config.SOLIS_STATION_ID
+BASE_URL = config.SOLIS_BASE_URL
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 

@@ -28,11 +28,16 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import ElementClickInterceptedException
 
+if __package__:
+    from . import config
+else:
+    import config
+
 # Initialize logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-USERNAME = os.getenv("KMP_USERNAME")
-PASSWORD = os.getenv("KMP_PASSWORD")
+USERNAME = config.KMP_USERNAME
+PASSWORD = config.KMP_PASSWORD
 PORTAL_URL = "http://portal.kmp-ab.se"
 RUNNING_MODES = frozenset({"LADDAR", "TÄNDNING", "UPPVÄRMNING", "HÖGEFFEKT"})
 IDLE_MODES = frozenset({"VILOLÄGE, SLÄCKER NED", "VILAR..."})
@@ -49,11 +54,11 @@ def start_chrome():
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
 
-        chrome_binary_path = os.getenv("CHROME_BINARY_PATH")
+        chrome_binary_path = config.CHROME_BINARY_PATH
         if chrome_binary_path:
             options.binary_location = chrome_binary_path
 
-        chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+        chromedriver_path = config.CHROMEDRIVER_PATH
         if chromedriver_path and os.path.basename(chromedriver_path).lower() in {
             "chrome", "chrome.exe"
         }:

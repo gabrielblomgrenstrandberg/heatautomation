@@ -16,18 +16,15 @@
 
 # module: tibber.py – A module for interacting with the Tibber API to fetch spot prices and Pulse data.
 
-import os
 import requests
 import json
 import logging
 import sys
-from pathlib import Path
 import websocket
-from dotenv import load_dotenv
-
-load_dotenv(dotenv_path=Path(__file__).resolve().with_name(".env"))
-
-TIBBER_API_KEY = os.getenv("TIBBER_API_KEY")
+if __package__:
+    from .config import TIBBER_API_KEY
+else:
+    from config import TIBBER_API_KEY
 URL = "https://api.tibber.com/v1-beta/gql"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
