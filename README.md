@@ -6,6 +6,8 @@ A script for selecting the best heat source based on spot price and temperature
 Edit [heatautomation/heatautomation.conf](./heatautomation/heatautomation.conf) for location,
 heating model, logging, polling, and operating settings. The file centralizes
 the application settings in INI format; restart the application after changing them.
+Inline comments begin with `#` or `;` when preceded by whitespace. For values
+containing those characters after whitespace, use an environment override instead.
 The loader requires this file alongside the Python modules and reports invalid
 or missing settings at startup. Heat-pump capacity rows are `temperature, capacity`
 pairs ordered from highest to lowest temperature.
@@ -16,7 +18,7 @@ The `.env` file is loaded regardless of which module is run.
 Existing variables are `TIBBER_API_KEY`, `SENSIBO_DEVICE_ID`, `SENSIBO_API_KEY`,
 `KMP_USERNAME`, `KMP_PASSWORD`, `SOLIS_KEY_ID`, `SOLIS_KEY_SECRET`,
 `SOLIS_STATION_ID`, `BASE_URL` (Solis), `CHROME_BINARY_PATH`,
-`CHROMEDRIVER_PATH`, `HEATAUTOMATION_TEST_MODE`, `HEATAUTOMATION_FAN_ASSIST`,
+`CHROMEDRIVER_PATH`, `HEATAUTOMATION_FAN_ASSIST`,
 `SENSIBO_MAX_FAN_LEVEL`, and `SPOT_PRICE_LIMIT`.
 
 Set `spotPriceLimit` to a positive price in SEK/kWh to select KMP when the
@@ -71,12 +73,13 @@ unless it observes KMP in `HÖGEFFEKT` first.
 ## Test mode
 
 Run the application without sending commands to KMP or Sensibo by setting
-`test_mode = true` in the configuration, or `HEATAUTOMATION_TEST_MODE=true` in the
-environment (or in the `.env` file) before starting it. Test mode is enabled by
-default. In this mode, the application
+`test_mode = true` in the `[operation]` section of the configuration. Test mode
+is enabled by default. In this mode, the application
 logs the device actions it would take, attempts read-only status checks for
 Sensibo and KMP, and does not change device settings. Set the variable to
-`false` to enable normal operation.
+`false` to enable normal operation, then restart the application.
+The former `HEATAUTOMATION_TEST_MODE` environment or `.env` variable is ignored;
+remove it to avoid a startup warning. **Only the config file controls test mode.**
 
 ## Running on Windows
 

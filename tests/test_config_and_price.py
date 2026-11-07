@@ -54,6 +54,42 @@ class SpotPriceLimitTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_inline_comments_on_settings_and_capacity_rows(self):
+        source = Path(__file__).resolve().parents[1] / "heatautomation"
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            shutil.copyfile(source / "config.py", target / "config.py")
+            contents = (source / "heatautomation.conf").read_text(encoding="utf-8")
+            contents = contents.replace(
+                "pellet_price_adjustment = 0.94875 # SEK/kWh",
+                "pellet_price_adjustment = 0.94875"
+            ).replace(
+                "pellet_price_adjustment = 0.94875",
+                "pellet_price_adjustment = 0.94875 # SEK/kWh"
+            ).replace(
+                "forecast_hours = 36", "forecast_hours = 36 ; hours"
+            ).replace(
+                "test_mode = true", "test_mode = true # read only"
+            ).replace(
+                "0, 6.5", "0, 6.5 # kW"
+            ).replace(
+                "log_file = heating_data_log.csv",
+                "log_file = heating_data_log.csv # output"
+            )
+            (target / "heatautomation.conf").write_text(contents, encoding="utf-8")
+            env = os.environ.copy()
+            env.pop("HEATAUTOMATION_TEST_MODE", None)
+            result = subprocess.run(
+                [sys.executable, "-c",
+                 "import config; assert config.PELLET_PRICE_ADJUSTMENT == 0.94875; "
+                 "assert config.FORECAST_HOURS == 36; "
+                 "assert config.TEST_MODE is True; "
+                 "assert config.HEAT_PUMP_CAPACITY_BY_TEMPERATURE[0] == (0, 6.5); "
+                 "assert config.LOG_FILE == 'heating_data_log.csv'"],
+                cwd=directory, env=env, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def run_config(self, **variables):
         env = os.environ.copy()
         env.update(variables)
@@ -67,11 +103,10 @@ class ConfigurationTests(unittest.TestCase):
     def test_environment_settings_override_defaults(self):
         result = self.run_config(
             SPOT_PRICE_LIMIT="2.25",
-            HEATAUTOMATION_TEST_MODE="false",
             HEATAUTOMATION_FAN_ASSIST="true",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "2.25 False True")
+        self.assertEqual(result.stdout.strip(), "2.25 True True")
 
     def test_invalid_price_limit_fails_explicitly(self):
         for value in ("-1", "nan", "inf", "not-a-number"):
@@ -136,7 +171,52 @@ class ConfigurationTests(unittest.TestCase):
             env.update(SPOT_PRICE_LIMIT="2.25", HEATAUTOMATION_TEST_MODE="true")
             result = subprocess.run(command, cwd=directory, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), "2.25 True True 58.0 (1.0, 7.5)")
+            self.assertEqual(result.stdout.strip(), "2.25 False True 58.0 (1.0, 7.5)")
+            self.assertIn("HEATAUTOMATION_TEST_MODE is ignored", result.stderr)
+
+    def test_test_mode_conf_overrides_legacy_env_and_dotenv(self):
+        source = Path(__file__).resolve().parents[1] / "heatautomation"
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            for path in source.glob("*.py"):
+                shutil.copyfile(path, target / path.name)
+            contents = (source / "heatautomation.conf").read_text(encoding="utf-8")
+            env = os.environ.copy()
+            env.pop("HEATAUTOMATION_TEST_MODE", None)
+            for value, expected, legacy in [("true", "True", "false"), ("false", "False", "true")]:
+                with self.subTest(value=value):
+                    (target / "heatautomation.conf").write_text(
+                        contents.replace("test_mode = true", "test_mode = " + value),
+                        encoding="utf-8",
+                    )
+                    (target / ".env").write_text(
+                        "HEATAUTOMATION_TEST_MODE=" + legacy, encoding="utf-8"
+                    )
+                    for use_env in (False, True):
+                        test_env = env.copy()
+                        if use_env:
+                            test_env["HEATAUTOMATION_TEST_MODE"] = legacy
+                        result = subprocess.run(
+                            [sys.executable, "-c", "import config; print(config.TEST_MODE)"],
+                            cwd=directory, env=test_env, capture_output=True, text=True,
+                        )
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(result.stdout.strip(), expected)
+                        self.assertIn("HEATAUTOMATION_TEST_MODE is ignored", result.stderr)
+                        command = (
+                            "from unittest.mock import patch; import main; "
+                            "k=patch.object(main.kmp, 'on', return_value=True); "
+                            "s=patch.object(main.sensibo, 'off', return_value={{'ok': True}}); "
+                            "r=patch.object(main.kmp, 'get_status', return_value={{'mode': 'AV'}}); "
+                            "on=k.start(); off=s.start(); r.start(); "
+                            "assert main.turn_on_pellet_stove(); "
+                            "assert on.call_count == {}; assert off.call_count == {}"
+                        ).format(0 if value == "true" else 1, 0 if value == "true" else 1)
+                        integration = subprocess.run(
+                            [sys.executable, "-c", command], cwd=directory,
+                            env=test_env, capture_output=True, text=True,
+                        )
+                        self.assertEqual(integration.returncode, 0, integration.stderr)
 
     def test_missing_and_invalid_conf_fail_at_startup(self):
         source = Path(__file__).resolve().parents[1] / "heatautomation"

@@ -1,6 +1,7 @@
 """Load and validate application settings."""
 
 import configparser
+import logging
 import math
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ from dotenv import load_dotenv
 _directory = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=_directory / ".env")
 _path = _directory / "heatautomation.conf"
-_settings = configparser.ConfigParser(interpolation=None)
+_settings = configparser.ConfigParser(interpolation=None, inline_comment_prefixes=("#", ";"))
 try:
     with _path.open(encoding="utf-8") as _file:
         _settings.read_file(_file)
@@ -52,7 +53,7 @@ def _integer(section, name):
     return result
 
 
-def _boolean(section, name, environment):
+def _boolean(section, name, environment=None):
     value = _value(section, name, environment).lower()
     if value in ("true", "1", "yes", "on"):
         return True
@@ -104,7 +105,12 @@ LOG_FILE = _value("operation", "log_file")
 if not WEATHER_TIMEZONE or not LOG_FILE:
     raise ValueError("Weather timezone and log file must not be empty")
 
-TEST_MODE = _boolean("operation", "test_mode", "HEATAUTOMATION_TEST_MODE")
+if "HEATAUTOMATION_TEST_MODE" in os.environ:
+    logging.warning(
+        "HEATAUTOMATION_TEST_MODE is ignored; set [operation] test_mode in %s instead.",
+        _path,
+    )
+TEST_MODE = _boolean("operation", "test_mode")
 FAN_ASSIST_ENABLED = _boolean("operation", "fan_assist_enabled", "HEATAUTOMATION_FAN_ASSIST")
 SENSIBO_MAX_FAN_LEVEL = _value(
     "operation", "sensibo_max_fan_level", "SENSIBO_MAX_FAN_LEVEL"
