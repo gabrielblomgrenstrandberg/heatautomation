@@ -78,14 +78,53 @@ def run_shadow_cycle(database, pump_capacity, now=None):
     now = now or datetime.now(timezone.utc)
     history = database.history()
     if len(history) < 7:
-        raise PlanningUnavailable("Seven recent observations are required")
+        raise PlanningUnavailable(
+            "Expected at least 7 recent indoor observations for shadow MPC; found {}"
+            .format(len(history))
+        )
     recent = history[-7:]
     timestamps = [datetime.fromisoformat(row["timestamp"]) for row in recent]
-    if (any(t.utcoffset() is None for t in timestamps)
-            or not 0 <= (now - timestamps[-1]).total_seconds() <= 600
-            or any(not 210 <= (b - a).total_seconds() <= 390
-                   for a, b in zip(timestamps, timestamps[1:]))):
-        raise PlanningUnavailable("Recent indoor observations are stale or discontinuous")
+    problems = []
+    naive = [index for index, timestamp in enumerate(timestamps, 1)
+             if timestamp.utcoffset() is None]
+    if naive:
+        problems.append(
+            "timestamps at observation positions {} have no timezone".format(
+                ", ".join(str(index) for index in naive)
+            )
+        )
+    if now.utcoffset() is None:
+        problems.append("planning time has no timezone")
+    elif timestamps[-1].utcoffset() is not None:
+        age = (now - timestamps[-1]).total_seconds()
+        if age < 0:
+            problems.append(
+                "newest observation at {} is {:.1f}s in the future".format(
+                    timestamps[-1].isoformat(), -age
+                )
+            )
+        elif age > 600:
+            problems.append(
+                "newest observation at {} is {:.1f}s old (maximum age: 600s)".format(
+                    timestamps[-1].isoformat(), age
+                )
+            )
+    for index, (start, end) in enumerate(zip(timestamps, timestamps[1:]), 1):
+        if start.utcoffset() is None or end.utcoffset() is None:
+            continue
+        seconds = (end - start).total_seconds()
+        if not 210 <= seconds <= 390:
+            problems.append(
+                "gap {}/6 from {} to {} is {:.1f}s (allowed: 210-390s)".format(
+                    index, start.isoformat(), end.isoformat(), seconds
+                )
+            )
+    if problems:
+        raise PlanningUnavailable(
+            "Recent indoor observations are stale or discontinuous: {}".format(
+                "; ".join(problems)
+            )
+        )
     indoor = [row.get("indoor_c") for row in recent]
     latest = recent[-1]
     if any(value is None for value in indoor):

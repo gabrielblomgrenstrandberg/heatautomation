@@ -177,6 +177,28 @@ class SchedulerTests(unittest.TestCase):
                                          model, self.settings, [])
         self.assertEqual(len(result["plan"]), 16)
 
+    def test_shadow_cycle_reports_discontinuous_observation_gap(self):
+        now = datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc)
+        observation_times = [
+            now - timedelta(minutes=30),
+            now - timedelta(minutes=25),
+            now - timedelta(minutes=20),
+            now - timedelta(minutes=15),
+            now - timedelta(minutes=10),
+            now - timedelta(minutes=5),
+            now - timedelta(minutes=4),
+        ]
+        history = [
+            {"timestamp": timestamp.isoformat()}
+            for timestamp in observation_times
+        ]
+        with self.assertRaisesRegex(
+                PlanningUnavailable,
+                r"gap 6/6 .* is 60\.0s \(allowed: 210-390s\)"):
+            mpc_monitor.run_shadow_cycle(
+                SimpleNamespace(history=lambda: history), lambda _: 6, now
+            )
+
     def test_shadow_cycle_persists_and_evaluates_without_commands(self):
         now = datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc)
         model = predictor()
