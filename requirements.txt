@@ -2,3 +2,9 @@ selenium
 requests
 python-dotenv
 websocket-client
+numpy
+pandas
+scikit-learn
+SQLAlchemy
+joblib
+scipy>=1.9; python_version >= "3.8"

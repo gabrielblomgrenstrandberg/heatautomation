@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from test_heat_switch import main
+from heatautomation import main
 
 model = main.heating_model
 COP = ((10, 4), (0, 3), (-10, 2))
@@ -187,11 +187,11 @@ class CostControllerTests(unittest.TestCase):
 
 class CostConfigurationTests(unittest.TestCase):
     def test_requires_measured_inputs_and_accepts_valid_configuration(self):
-        source = Path(__file__).resolve().parents[1] / "heatautomation"
+        source = Path(__file__).resolve().parents[2] / "heatautomation"
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
             shutil.copyfile(source / "config.py", target / "config.py")
-            shutil.copyfile(source / "heating_model.py", target / "heating_model.py")
+            shutil.copyfile(source / "control" / "heating_model.py", target / "heating_model.py")
             contents = (source / "heatautomation.conf").read_text(encoding="utf-8")
             for name in ("pellet_energy_kwh_per_kg", "pellet_price_per_bag",
                          "cop_by_temperature", "demand_by_temperature"):

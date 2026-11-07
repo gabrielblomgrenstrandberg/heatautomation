@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 from selenium.common.exceptions import TimeoutException
 
-from heatautomation import kmp, sensibo, tibber
+from heatautomation.integrations import kmp, sensibo, tibber
 
 
 class TibberGridReadingsTests(unittest.TestCase):
