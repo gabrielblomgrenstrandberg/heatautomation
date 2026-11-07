@@ -29,7 +29,6 @@ load_dotenv(dotenv_path=Path(__file__).resolve().with_name(".env"))
 
 TIBBER_API_KEY = os.getenv("TIBBER_API_KEY")
 URL = "https://api.tibber.com/v1-beta/gql"
-WEBSOCKET_URL = "wss://websocket-api.tibber.com/v1-beta/gql/subscriptions"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -162,8 +161,12 @@ def get_grid_import_export():
     homes_query = """
     query {
       viewer {
+        websocketSubscriptionUrl
         homes {
           id
+          features {
+            realTimeConsumptionEnabled
+          }
         }
       }
     }
@@ -177,7 +180,8 @@ def get_grid_import_export():
             timeout=10
         )
         response.raise_for_status()
-        homes = response.json().get("data", {}).get("viewer", {}).get("homes", [])
+        viewer = response.json().get("data", {}).get("viewer", {})
+        homes = viewer.get("homes", [])
         if not homes:
             logging.warning("No homes found in Tibber response.")
             return None
@@ -185,6 +189,19 @@ def get_grid_import_export():
         home_id = homes[0].get("id")
         if not home_id:
             logging.warning("Home ID not found in Tibber response.")
+            return None
+
+        features = homes[0].get("features") or {}
+        if features.get("realTimeConsumptionEnabled") is False:
+            logging.warning(
+                "Tibber real-time consumption is not enabled for this home; "
+                "check the Pulse setup and Tibber account."
+            )
+            return None
+
+        subscription_url = viewer.get("websocketSubscriptionUrl")
+        if not subscription_url:
+            logging.warning("WebSocket subscription URL not found in Tibber response.")
             return None
 
         measurement_query = """
@@ -196,17 +213,34 @@ def get_grid_import_export():
         }
         """ % json.dumps(home_id)
         socket = websocket.create_connection(
-            WEBSOCKET_URL,
-            header=headers,
+            subscription_url,
+            header={"User-Agent": "heatautomation/1.0"},
             subprotocols=["graphql-transport-ws"],
             timeout=10
         )
         try:
-            socket.send(json.dumps({"type": "connection_init"}))
+            socket.send(json.dumps({
+                "type": "connection_init",
+                "payload": {"token": TIBBER_API_KEY}
+            }))
             subscribed = False
 
             while True:
-                message = json.loads(socket.recv())
+                raw_message = socket.recv()
+                if not raw_message:
+                    logging.error("Tibber closed the WebSocket without sending a response.")
+                    return None
+
+                try:
+                    message = json.loads(raw_message)
+                except json.JSONDecodeError:
+                    logging.error("Tibber returned an invalid WebSocket message.")
+                    return None
+
+                if not isinstance(message, dict):
+                    logging.error("Tibber returned an unexpected WebSocket message.")
+                    return None
+
                 message_type = message.get("type")
 
                 if message_type == "ping":
@@ -222,6 +256,10 @@ def get_grid_import_export():
                     }))
                     subscribed = True
                 elif message_type == "next":
+                    errors = message.get("payload", {}).get("errors")
+                    if errors:
+                        logging.error("Tibber live measurement error: %s", errors)
+                        return None
                     measurement = (
                         message.get("payload", {})
                         .get("data", {})

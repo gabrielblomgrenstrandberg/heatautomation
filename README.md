@@ -13,16 +13,18 @@ to use another location. `get_forecast()` returns a list of hourly readings;
 `get_outdoor_temp()` remains available for the heating controller.
 
 The application logs Tibber Pulse grid import and export at startup and every
-five minutes.
+five minutes when real-time consumption is enabled for the selected Tibber
+home. If it is unavailable, check the Pulse installation and the home's
+real-time access in Tibber; the remaining heating control can continue.
 
 ## Test mode
 
 Run the application without sending commands to KMP or Sensibo by setting
 `HEATAUTOMATION_TEST_MODE=true` in the environment (or in the `.env` file) before
-starting it. In this mode, the application logs the device actions it would
-take, attempts read-only status checks for Sensibo and KMP, and does not change
-device settings. Set the variable to `false` or remove it to enable normal
-operation.
+starting it. Test mode is enabled by default. In this mode, the application
+logs the device actions it would take, attempts read-only status checks for
+Sensibo and KMP, and does not change device settings. Set the variable to
+`false` to enable normal operation.
 
 ## Running on Windows
 

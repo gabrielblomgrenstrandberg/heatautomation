@@ -88,12 +88,11 @@ def login(driver):
 
 def get_mode(driver):
     try:
-        mode_element = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "mode"))
+        return WebDriverWait(driver, 15).until(
+            lambda current_driver: current_driver.find_element(By.ID, "mode").text.strip()
         )
-        return mode_element.text
     except Exception as e:
-        logging.error(f"Could not find the mode element: {e}", exc_info=True)
+        logging.error(f"Could not read the pellet stove mode: {e}", exc_info=True)
         return None
 
 def click_start(driver):
@@ -114,7 +113,9 @@ def off():
         login(driver)
         mode = get_mode(driver)
 
-        if mode in ["AV", "AVSTÄNGD, SLÄCKER NED"]:
+        if not mode:
+            logging.error("Cannot turn off the pellet stove without a known mode.")
+        elif mode in ["AV", "AVSTÄNGD, SLÄCKER NED"]:
             logging.info(f"Pellet stove is already off.")
         else:
             logging.info(f"Pellet stove is on, turning it off.")

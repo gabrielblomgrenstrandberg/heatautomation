@@ -22,7 +22,8 @@ import logging
 
 # Static global variables
 DEVICE_ID = os.getenv("SENSIBO_DEVICE_ID")
-URL = f"https://home.sensibo.com/api/v2/pods/{DEVICE_ID}/acStates" # Sensibo API endpoint for fetching user pod information
+POD_URL = f"https://home.sensibo.com/api/v2/pods/{DEVICE_ID}"
+URL = f"{POD_URL}/acStates"
 SENSIBO_API_KEY = os.getenv("SENSIBO_API_KEY")
 
 # Set up logging
@@ -35,22 +36,39 @@ def handle_error(response):
 def status():
     # Define the parameters to include in the request
     params = {
-        'fields': '*',  # Fetch all fields
+        'fields': 'acState,mainMeasurementsSensor',
         'apiKey': SENSIBO_API_KEY
     }
-    
-    # Send a GET request to the Sensibo API
-    response = requests.get(URL, params=params, timeout=10)
 
-    # Check if the request was successful
-    if response.status_code == 200:
-        # Parse the JSON response
-        data = response.json()
-        return data
-    else:
-        # If the request failed, print the status code and error message
-        print(f"Failed to retrieve data. Status code: {response.status_code}")
+    try:
+        response = requests.get(POD_URL, params=params, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logging.error("Could not retrieve Sensibo status: %s", e)
+    except ValueError as e:
+        logging.error("Sensibo returned invalid status data: %s", e)
+    return None
+
+
+def _first_result(data, description):
+    if not isinstance(data, dict):
+        logging.warning("Sensibo %s data is unavailable.", description)
         return None
+
+    results = data.get('result')
+    if isinstance(results, dict):
+        return results
+    if not isinstance(results, list) or not results:
+        logging.warning("Sensibo returned no %s data.", description)
+        return None
+
+    result = results[0]
+    if not isinstance(result, dict):
+        logging.error("Sensibo returned an invalid %s entry.", description)
+        return None
+    return result
+
 
 def send_post_request(data):
     headers = {'Content-Type': 'application/json'}
@@ -76,32 +94,34 @@ def setTemp(temp):
     return send_post_request(data)        
 
 def getTemp():
-    params = {'fields': '*', 'apiKey': SENSIBO_API_KEY}
-    response = requests.get(URL, params=params, timeout=10)
-
-    if response.status_code == 200:
-        data = response.json()
-        try:
-            target_temperature = data['result'][0]['mainMeasurementsSensor']['measurements']['temperature']
-            return target_temperature
-        except KeyError:
-            logging.error("Temperature data not found in the response")
-            return None
-    else:
-        handle_error(response)
+    result = _first_result(status(), "temperature")
+    if result is None:
         return None
-    
+
+    sensor = result.get('mainMeasurementsSensor')
+    measurements = sensor.get('measurements') if isinstance(sensor, dict) else None
+    if not isinstance(measurements, dict) or 'temperature' not in measurements:
+        logging.warning("Sensibo temperature data is unavailable.")
+        return None
+    return measurements['temperature']
+
 
 def getSystemStatus():
     data = status()  # Using the status function
-    if data:
-        ac_state = data['result'][0]['acState']
-        return {
-            "is_on": ac_state['on'],
-            "mode": ac_state['mode'],
-            "target_temperature": ac_state.get('targetTemperature', 'N/A')
-        }
-    return None
+    result = _first_result(data, "AC state")
+    if result is None:
+        return None
+
+    ac_state = result.get('acState')
+    if not isinstance(ac_state, dict) or 'on' not in ac_state:
+        logging.warning("Sensibo AC state is missing its power status.")
+        return None
+
+    return {
+        "is_on": ac_state['on'],
+        "mode": ac_state.get('mode'),
+        "target_temperature": ac_state.get('targetTemperature', 'N/A')
+    }
 
 def check_connection():
     """
@@ -109,7 +129,7 @@ def check_connection():
     Returns True if reachable, False otherwise.
     """
     try:
-        response = requests.get(URL, params={'apiKey': SENSIBO_API_KEY}, timeout=5)
+        response = requests.get(POD_URL, params={'apiKey': SENSIBO_API_KEY}, timeout=5)
         return response.status_code == 200
     except requests.exceptions.RequestException as e:
         logging.error(f"Error checking connection: {e}")
