@@ -1,4 +1,4 @@
+selenium
 requests
 python-dotenv
-selenium
-webdriver-manager
+websocket-client

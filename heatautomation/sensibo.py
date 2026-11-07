@@ -16,14 +16,19 @@
 
 # module: sensibo.py – A module for interacting with the Sensibo API to control air conditioning units (heat pump).
 
-import os
 import requests
 import logging
 
+if __package__:
+    from . import config
+else:
+    import config
+
 # Static global variables
-DEVICE_ID = os.getenv("SENSIBO_DEVICE_ID")
-URL = f"https://home.sensibo.com/api/v2/pods/{DEVICE_ID}/acStates" # Sensibo API endpoint for fetching user pod information
-SENSIBO_API_KEY = os.getenv("SENSIBO_API_KEY")
+DEVICE_ID = config.SENSIBO_DEVICE_ID
+POD_URL = f"https://home.sensibo.com/api/v2/pods/{DEVICE_ID}"
+URL = f"{POD_URL}/acStates"
+SENSIBO_API_KEY = config.SENSIBO_API_KEY
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -35,22 +40,39 @@ def handle_error(response):
 def status():
     # Define the parameters to include in the request
     params = {
-        'fields': '*',  # Fetch all fields
+        'fields': 'acState,mainMeasurementsSensor',
         'apiKey': SENSIBO_API_KEY
     }
-    
-    # Send a GET request to the Sensibo API
-    response = requests.get(URL, params=params, timeout=10)
 
-    # Check if the request was successful
-    if response.status_code == 200:
-        # Parse the JSON response
-        data = response.json()
-        return data
-    else:
-        # If the request failed, print the status code and error message
-        print(f"Failed to retrieve data. Status code: {response.status_code}")
+    try:
+        response = requests.get(POD_URL, params=params, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logging.error("Could not retrieve Sensibo status: %s", e)
+    except ValueError as e:
+        logging.error("Sensibo returned invalid status data: %s", e)
+    return None
+
+
+def _first_result(data, description):
+    if not isinstance(data, dict):
+        logging.warning("Sensibo %s data is unavailable.", description)
         return None
+
+    results = data.get('result')
+    if isinstance(results, dict):
+        return results
+    if not isinstance(results, list) or not results:
+        logging.warning("Sensibo returned no %s data.", description)
+        return None
+
+    result = results[0]
+    if not isinstance(result, dict):
+        logging.error("Sensibo returned an invalid %s entry.", description)
+        return None
+    return result
+
 
 def send_post_request(data):
     headers = {'Content-Type': 'application/json'}
@@ -67,6 +89,71 @@ def on(mode="heat"):
     data = {"acState": {"on": True, "mode": mode}}
     return send_post_request(data)
 
+
+def fan_on(fan_level):
+    return send_post_request({
+        "acState": {"on": True, "mode": "fan", "fanLevel": fan_level}
+    })
+
+
+def get_fan_level():
+    try:
+        response = requests.get(
+            POD_URL,
+            params={'fields': 'remoteCapabilities', 'apiKey': SENSIBO_API_KEY},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (requests.RequestException, ValueError) as e:
+        logging.error("Could not retrieve Sensibo fan capabilities: %s", e)
+        return None
+
+    pod = _first_result(data, "fan capabilities")
+    capabilities = pod.get('remoteCapabilities') if pod else None
+    modes = capabilities.get('modes') if isinstance(capabilities, dict) else None
+    fan = modes.get('fan') if isinstance(modes, dict) else None
+    levels = fan.get('fanLevels') if isinstance(fan, dict) else None
+    if not isinstance(levels, list) or not levels or not all(
+        isinstance(level, str) for level in levels
+    ):
+        logging.warning("Sensibo fan speed capabilities are unavailable.")
+        return None
+
+    configured = config.SENSIBO_MAX_FAN_LEVEL
+    if configured:
+        if configured in levels and configured.lower() != 'auto':
+            return configured
+        logging.error("Configured Sensibo maximum fan level is not supported.")
+        return None
+
+    priority = (
+        'turbo', 'powerful', 'strongest', 'strong', 'high', 'medium_high',
+        'medium', 'medium_low', 'low', 'quiet'
+    )
+    if any(level.lower() not in priority and level.lower() != 'auto' for level in levels):
+        logging.warning(
+            "Sensibo has unrecognized fan levels; set SENSIBO_MAX_FAN_LEVEL "
+            "to the highest supported level."
+        )
+        return None
+    for candidate in priority:
+        for level in levels:
+            if level.lower() == candidate:
+                return level
+    logging.warning("Sensibo has no supported fixed fan speed.")
+    return None
+
+
+def get_fan_state():
+    result = _first_result(status(), "AC state")
+    state = result.get('acState') if result else None
+    if not isinstance(state, dict) or not isinstance(state.get('on'), bool):
+        logging.warning("Sensibo fan state is unavailable.")
+        return None
+    return state
+
+
 def off():
     data = {"acState": {"on": False}}
     return send_post_request(data)
@@ -76,32 +163,34 @@ def setTemp(temp):
     return send_post_request(data)        
 
 def getTemp():
-    params = {'fields': '*', 'apiKey': SENSIBO_API_KEY}
-    response = requests.get(URL, params=params, timeout=10)
-
-    if response.status_code == 200:
-        data = response.json()
-        try:
-            target_temperature = data['result'][0]['mainMeasurementsSensor']['measurements']['temperature']
-            return target_temperature
-        except KeyError:
-            logging.error("Temperature data not found in the response")
-            return None
-    else:
-        handle_error(response)
+    result = _first_result(status(), "temperature")
+    if result is None:
         return None
-    
+
+    sensor = result.get('mainMeasurementsSensor')
+    measurements = sensor.get('measurements') if isinstance(sensor, dict) else None
+    if not isinstance(measurements, dict) or 'temperature' not in measurements:
+        logging.warning("Sensibo temperature data is unavailable.")
+        return None
+    return measurements['temperature']
+
 
 def getSystemStatus():
     data = status()  # Using the status function
-    if data:
-        ac_state = data['result'][0]['acState']
-        return {
-            "is_on": ac_state['on'],
-            "mode": ac_state['mode'],
-            "target_temperature": ac_state.get('targetTemperature', 'N/A')
-        }
-    return None
+    result = _first_result(data, "AC state")
+    if result is None:
+        return None
+
+    ac_state = result.get('acState')
+    if not isinstance(ac_state, dict) or 'on' not in ac_state:
+        logging.warning("Sensibo AC state is missing its power status.")
+        return None
+
+    return {
+        "is_on": ac_state['on'],
+        "mode": ac_state.get('mode'),
+        "target_temperature": ac_state.get('targetTemperature', 'N/A')
+    }
 
 def check_connection():
     """
@@ -109,7 +198,7 @@ def check_connection():
     Returns True if reachable, False otherwise.
     """
     try:
-        response = requests.get(URL, params={'apiKey': SENSIBO_API_KEY}, timeout=5)
+        response = requests.get(POD_URL, params={'apiKey': SENSIBO_API_KEY}, timeout=5)
         return response.status_code == 200
     except requests.exceptions.RequestException as e:
         logging.error(f"Error checking connection: {e}")

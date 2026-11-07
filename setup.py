@@ -16,7 +16,7 @@
 
 # setup.py - This script is used to package the Python project for distribution.
 
-from setuptools import setup, find_packages
+from setuptools import setup, find_namespace_packages
 
 setup(
     name='heatautomation',
@@ -24,10 +24,12 @@ setup(
     author='Gabriel Blomgren Strandberg',
     author_email='gabriel.blomgren.strandberg@gmail.com',
     description='Automatic heat source selector that selects the best heat source based on spot price and outoor temperature.',
-    packages=find_packages(),
+    packages=find_namespace_packages(include=['heatautomation', 'heatautomation.*']),
+    package_data={'heatautomation': ['heatautomation.conf']},
     install_requires=[
         'requests',
         'python-dotenv',
+        'websocket-client',
         'selenium',
         'webdriver-manager',
     ],
