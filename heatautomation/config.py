@@ -1,0 +1,4 @@
+"""Application configuration."""
+
+WEATHER_LATITUDE = 60.12345
+WEATHER_LONGITUDE = 15.27237

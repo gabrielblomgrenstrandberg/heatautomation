@@ -1,6 +1,17 @@
 # heatautomation
 A script for selecting the best heat source based on spot price and temperature
 
+## Weather forecast
+
+SMHI's current public forecast API does not provide a general-weather forecast
+with all of these fields, so the `weather` module uses Open-Meteo as an
+alternative. It fetches hourly temperature, wind speed, relative humidity,
+surface pressure, and rain forecasts for the next 36 hours.
+The default location is Hagge, Sweden. Change `WEATHER_LATITUDE` and
+`WEATHER_LONGITUDE` in [heatautomation/config.py](./heatautomation/config.py)
+to use another location. `get_forecast()` returns a list of hourly readings;
+`get_outdoor_temp()` remains available for the heating controller.
+
 ## Test mode
 
 Run the application without sending commands to KMP or Sensibo by setting

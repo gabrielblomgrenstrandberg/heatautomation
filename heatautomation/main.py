@@ -19,7 +19,7 @@
 import tibber
 import sensibo
 import kmp
-import smhi
+import weather
 import time
 import os
 from datalogger import log_data
@@ -128,7 +128,12 @@ def main_loop():
             time.sleep(30)
             continue
 
-        outdoor_temp = smhi.get_outdoor_temp()
+        outdoor_temp = weather.get_outdoor_temp()
+        if outdoor_temp is None:
+            logging.warning("No outdoor temperature available. Skipping cycle.")
+            time.sleep(30)
+            continue
+
         heating_type, heating_capacity = decide_heating_source(outdoor_temp, spot_price)
 
         if heating_type == "heatpump" and current_heat_type != "heatpump":
