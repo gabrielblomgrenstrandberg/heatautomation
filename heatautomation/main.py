@@ -563,6 +563,15 @@ def main_loop():
 
         wait_until_next_quarter()
 
+def run_application():
+    from .web.startup import start_web_server, stop_web_server
+
+    server = start_web_server()
+    try:
+        main_loop()
+    finally:
+        stop_web_server(server)
+
+
 if __name__ == "__main__":
-    main_loop()
-    logging.info("Starting main loop...")
+    run_application()

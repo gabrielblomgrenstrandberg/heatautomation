@@ -13,6 +13,12 @@ prediction and cost calculations; they should not be reimplemented in the GUI.
 The lock is not shared across processes. A web process must never import the
 controller and call equipment clients as a substitute for a command interface.
 Stopping or restarting the web process must not affect the controller.
+The controller entry point starts a separate optional web subprocess and stops
+it on normal controller shutdown. Startup failures and later web process exits
+are logged without stopping the control loop. The service binds to loopback by
+default; it requires a configured web password and installed optional
+dependencies. A non-loopback `HEATAUTOMATION_WEB_HOST` is an explicit opt-in
+for deployments such as containers and requires network protection.
 
 ## Proposed structure
 
