@@ -32,6 +32,11 @@ setup(
         'websocket-client',
         'selenium',
         'webdriver-manager',
+        'numpy',
+        'pandas',
+        'scikit-learn',
+        'SQLAlchemy',
+        'joblib',
     ],
     classifiers=[
         'Programming Language :: Python :: 3',

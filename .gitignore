@@ -61,6 +61,8 @@ heating_data_log.csv
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+thermal_history.sqlite3*
+thermal_model.joblib*
 
 # Flask stuff:
 instance/

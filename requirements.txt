@@ -2,3 +2,8 @@ selenium
 requests
 python-dotenv
 websocket-client
+numpy
+pandas
+scikit-learn
+SQLAlchemy
+joblib

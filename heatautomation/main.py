@@ -447,6 +447,36 @@ def grid_monitor_loop():
             next_poll = time.monotonic() + GRID_POLL_INTERVAL_SECONDS
 
 
+def thermal_monitor_loop():
+    # Imports are deferred so a monitoring dependency cannot prevent heat control.
+    try:
+        import thermal_collection
+        import thermal_database
+        import thermal_training
+    except ImportError:
+        logging.exception("Thermal monitoring unavailable: dependency import failed.")
+        return
+    database = None
+    next_poll = time.monotonic()
+    next_training = next_poll
+    while True:
+        sleep_seconds = next_poll - time.monotonic()
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+        try:
+            if database is None:
+                database = thermal_database.ThermalDatabase(config.THERMAL_DATABASE_PATH)
+            thermal_collection.collect(database, get_effective_heating_capacity)
+            if time.monotonic() >= next_training:
+                thermal_training.train(database, config.THERMAL_MODEL_PATH)
+                next_training = time.monotonic() + 3600
+        except Exception:
+            logging.exception("Thermal monitoring failed; will retry on the next poll.")
+        next_poll += 300
+        if next_poll <= time.monotonic():
+            next_poll = time.monotonic() + 300
+
+
 # Main program loop
 def main_loop():
     current_heat_type = "none"
@@ -456,6 +486,12 @@ def main_loop():
         name="tibber-grid-monitor",
         daemon=True
     ).start()
+    if config.THERMAL_LEARNING_ENABLED:
+        threading.Thread(
+            target=thermal_monitor_loop,
+            name="thermal-monitor",
+            daemon=True
+        ).start()
     if FAN_ASSIST_ENABLED:
         threading.Thread(
             target=fan_monitor_loop,

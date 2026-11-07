@@ -77,6 +77,80 @@ controller uses provider-reported status and command acknowledgements, not
 independent physical-output confirmation; safety interlocks and thermostat
 controls remain necessary.
 
+## Thermal learning (monitoring only)
+
+`[thermal_learning]` enables a separate read-only worker by default. It attempts
+one observation every five minutes, independently of the quarter-hour control
+loop, and retrains at most once per hour. Set `enabled = false` to disable it.
+`database_path` and `model_path` are relative to the application working
+directory unless absolute paths are provided. Install the updated dependencies
+from `requirements.txt`; in Docker, persist both paths in a mounted volume if
+the history and model should survive container replacement. Back up the SQLite
+database regularly. The database and model may contain information about the
+home and should be kept private. Only load trusted model files: joblib files
+can execute code during loading.
+
+The database stores UTC observation times, Sensibo temperature, humidity,
+target and mode, Open-Meteo's current-hour temperature, Tibber total price,
+and individual source states and nominal capacities. Tables for sensors and
+sources allow new names without changing the observation schema. Missing
+readings are stored as NULL, not as zero. KMP startup and shutdown modes, and
+Sensibo modes whose thermal output is unknown, have unknown capacities and are
+excluded from training. The capacities are configured estimates, **not**
+measured delivered heat. An enabled heat pump may also be cycling internally.
+The source readings are sequential rather than atomic, and the providers do
+not establish that every sensor measurement is fresh. A slow or failed poll
+can leave a gap; collection errors are logged and retried.
+
+The heating and cooling models use the indoor/outdoor temperatures, a
+30-minute indoor-temperature lag and source capacities to estimate net
+temperature change in °C/hour. Training excludes missing and implausible
+readings, intervals outside 3.5–6.5 minutes, and samples without 30 minutes
+of continuous, unchanged source configuration both before and after the
+interval. Heating samples additionally require an observed start and end of
+the same uninterrupted source configuration; ongoing or interrupted cycles
+are excluded. It keeps all stored history to allow seasonal learning. Each regime
+needs at least 120 qualifying intervals; models may therefore be unavailable
+for some time. A chronological holdout with a 30-minute separation reports
+one-step rate MAE and RMSE in `thermal_evaluations` on each successful
+retraining. These are not measurements of six-hour forecast accuracy.
+
+The interface takes an explicit weather and heating scenario; it never issues
+commands or participates in source selection. For example:
+
+```python
+from heatautomation.thermal_prediction import ThermalPredictor, PredictionUnavailable
+
+recent = [20.0, 20.0, 19.9, 19.9, 19.9, 19.8, 19.8]  # 5-minute readings, oldest first
+outdoor = [2.0] * 72  # replace with forecast temperatures for each 5-minute step
+plan = [{"heatpump": 4.0, "pelletstove": 0.0}] * 72  # nominal kW for each step
+try:
+    predictor = ThermalPredictor("thermal_model.joblib")
+    result = predictor.forecast(recent, outdoor, plan, target_c=21.0)
+    print(result["predictions"])  # keys: 1, 2, 3 and 6 hours
+    print(result["heat_up_hours"])  # None if target not reached within six hours
+    print(predictor.cooling_rate(recent, 2.0))
+    print(predictor.heating_rate(recent, 2.0, 4.0, 0.0))
+    print(predictor.heating_demand(recent, 2.0))
+    print(predictor.source_response("heatpump"))
+except PredictionUnavailable as error:
+    print("Insufficient data:", error)
+```
+
+Convert the hourly weather forecast into 72 five-minute values before calling
+the interface, using an explicit timezone-aware mapping appropriate for the
+installation. Plans must cover the entire six-hour horizon. A source
+combination requires at least 20 qualifying observations; missing models and
+unsupported combinations raise `PredictionUnavailable`. The forecast's
+`error_scale_c` accumulates one-step holdout RMSE as a **heuristic**, not a
+statistical confidence interval. Source response and demand are approximate
+correlations expressed relative to nominal capacity, not measured output or
+causal effects. They can be misleading when sources, weather and thermostat
+behavior are correlated. Validate against real multi-hour outcomes, across
+seasons and operating modes, before considering any future control integration.
+The legacy CSV contains decisions rather than the necessary indoor and
+device-state observations and is not imported as training data.
+
 ## Weather forecast
 
 SMHI's current public forecast API does not provide a general-weather forecast
