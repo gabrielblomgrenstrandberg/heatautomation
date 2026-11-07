@@ -164,6 +164,82 @@ seasons and operating modes, before considering any future control integration.
 The legacy CSV contains decisions rather than the necessary indoor and
 device-state observations and is not imported as training data.
 
+## Experimental shadow MPC scheduler
+
+The `[mpc]` section is **disabled by default**. When enabled with thermal
+learning and cost control, the existing five-minute thermal monitor also
+attempts to generate and evaluate shadow plans. It never commands a device and
+does not replace or influence the existing controller. It polls for updated
+observations, prices and weather every five minutes; it is **not event-driven**
+and therefore cannot react immediately between polls. A slow solver or provider
+can delay the next attempt.
+
+Planning uses Tibber's first subscribed home's quarter-hourly `total` prices
+for today and tomorrow and the configured Open-Meteo forecast. It stops at the
+first missing quarter-hour or weather hour, up to 144 intervals (36 hours).
+Weather times are interpreted in the configured timezone; ambiguous daylight
+saving timestamps are rejected rather than guessed. Plans begin at the next
+UTC quarter hour and assume the latest temperature and device state persist
+until then. Seven consecutive, recent indoor readings and known stable device
+statuses are required. Provider failure, missing data, infeasible constraints,
+or insufficient model quality are logged; no substitute plan or control
+action is generated.
+
+Before enabling, configure the comfort limits, nominal target, uncertainty
+margin, electricity extra cost (SEK/kWh, in addition to Tibber `total`),
+temperature-deviation penalty (SEK per °C per interval), switch penalty (SEK
+per transition), and minimum on/off times. Configure and verify the cost-control
+COP curve, capacities and pellet cost for the installation. The existing
+`test_mode` controls the old controller; it does not change the shadow-only
+behavior of MPC. The MPC requires Python 3.8+ and SciPy 1.9+.
+
+Architecture:
+
+* `control/mpc.py` formulates a mixed-integer linear program for SciPy/HiGHS;
+  SciPy was selected instead of adding OR-Tools because the installed
+  scientific stack already depends on it. It models none, pump, stove and
+  combined operation as binary states. Capacities are full nominal outputs,
+  not modulated equipment commands. Runtime and off-time constraints are
+  rounded up to 15-minute intervals; unknown initial elapsed time is treated
+  conservatively, and switches near the horizon end must complete their dwell.
+* The existing separate linear thermal regressions supply the 15-minute Euler
+  temperature dynamics, using indoor and outdoor temperature, source capacity,
+  and a roughly 30-minute indoor lag. Only source combinations with sufficient
+  support and acceptable one-step holdout RMSE are allowed. A configurable
+  fixed comfort margin is **not** a calibrated forecast confidence interval.
+  Temperatures are constrained inside the comfort range and no higher than
+  normal target + 2°C. Objective terms are modeled energy cost, deviation
+  from normal, and switching cost. A solver result is accepted only after
+  checking all constraints and, for a time-limited incumbent, a maximum 10%
+  reported optimality gap. Solver status and gap are saved with each interval.
+* `control/mpc_monitor.py` adapts forecasts and observations and saves plans
+  in `mpc_plans` and `mpc_plan_intervals` in the thermal SQLite database.
+  The former records time, model version timestamp, initial temperature,
+  settings and changes in overlapping source choices; the latter records
+  forecast inputs, temperatures, source choices and nominal energy/cost
+  estimates. The monitor also attempts a same-model comparison with preheating
+  disabled. Its `modeled_savings` is a scenario comparison, **not actual
+  savings**; the no-preheat case can be infeasible.
+* `control/mpc_simulation.py` provides `simulate(intervals, recent_indoor_c,
+  initial_state, predictor, settings, observations)`. Pass historic inputs
+  using the `Interval` and `Settings` classes and a trusted model artifact
+  created before the horizon. Keep forecasts as issued at the time: using
+  observed future prices/weather instead introduces hindsight. `evaluate`
+  compares plan-end temperatures with nearby historical readings.
+  `mpc_plan_evaluations` stores these temperature errors and whether sources
+  matched **at the endpoint only**; it does not establish that the full
+  interval followed the plan.
+
+Important limitations: this prototype does not model startup/shutdown ramps,
+thermostat cycling, terminal stored-heat value, or forecast uncertainty
+accurately. Its one-step model-quality gate does not validate multi-hour
+accuracy. Nominal capacity/COP are not measurements of heat pump power,
+pellet consumption, or delivered heat; actual device energy, cost and savings
+are unavailable and are not inferred from whole-home grid import. Plan
+evaluation does not automatically adjust the optimizer or train the thermal
+model. Validate forecasts, equipment behavior, and genuinely measured costs
+over seasons before considering any future control integration.
+
 ## Weather forecast
 
 SMHI's current public forecast API does not provide a general-weather forecast

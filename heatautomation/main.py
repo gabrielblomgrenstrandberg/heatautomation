@@ -468,6 +468,16 @@ def thermal_monitor_loop():
             if time.monotonic() >= next_training:
                 thermal_training.train(database, config.THERMAL_MODEL_PATH)
                 next_training = time.monotonic() + 3600
+            if config.MPC_ENABLED:
+                from .control.mpc_monitor import run_shadow_cycle
+                from .control.mpc import PlanningUnavailable
+                from .control.mpc_simulation import evaluate
+                from .learning.prediction import PredictionUnavailable
+                try:
+                    database.evaluate_plans(evaluate)
+                    run_shadow_cycle(database, get_effective_heating_capacity)
+                except (PlanningUnavailable, PredictionUnavailable) as error:
+                    logging.warning("Shadow MPC planning unavailable: %s", error)
         except Exception:
             logging.exception("Thermal monitoring failed; will retry on the next poll.")
         next_poll += 300

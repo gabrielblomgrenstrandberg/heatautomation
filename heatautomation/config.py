@@ -123,6 +123,10 @@ THERMAL_MODEL_PATH = _value("thermal_learning", "model_path")
 if not THERMAL_DATABASE_PATH or not THERMAL_MODEL_PATH:
     raise ValueError("[thermal_learning] database_path and model_path must not be empty")
 
+MPC_ENABLED = _boolean("mpc", "enabled")
+if MPC_ENABLED and not THERMAL_LEARNING_ENABLED:
+    raise ValueError("[mpc] requires [thermal_learning] enabled")
+
 spotPriceLimit = _number("heating", "spotPriceLimit", "SPOT_PRICE_LIMIT", non_negative=True)
 MAX_PRICE_THRESHOLD = _number("heating", "max_price_threshold")
 PELLET_PRICE_ADJUSTMENT = _number("heating", "pellet_price_adjustment")

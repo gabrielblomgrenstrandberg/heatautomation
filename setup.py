@@ -37,6 +37,7 @@ setup(
         'scikit-learn',
         'SQLAlchemy',
         'joblib',
+        'scipy>=1.9; python_version >= "3.8"',
     ],
     classifiers=[
         'Programming Language :: Python :: 3',
