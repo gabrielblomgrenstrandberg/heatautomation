@@ -23,28 +23,24 @@ import logging
 import sys
 from dotenv import load_dotenv
 
-# Ladda miljövariabler
 load_dotenv()
+
 TIBBER_API_KEY = os.getenv("TIBBER_API_KEY")
 URL = "https://api.tibber.com/v1-beta/gql"
 
-# Kontrollera API-nyckel direkt
-if not TIBBER_API_KEY:
-    logging.critical("TIBBER_API_KEY is not set. Please check your .env file.")
-    sys.exit(1)
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
 def get_spot_price():
-    """
-    Fetches the current spot price from the Tibber API.
-    Returns:
-        float: The current spot price, or None if not found.
-    """
+    if not TIBBER_API_KEY:
+        logging.critical("TIBBER_API_KEY is not set. Please check your .env file.")
+        sys.exit(1)
+
     headers = {
         "Authorization": f"Bearer {TIBBER_API_KEY}",
         "Content-Type": "application/json"
     }
+
     query = """
     {
       viewer {
@@ -67,52 +63,52 @@ def get_spot_price():
     payload = {"query": query}
 
     try:
-        response = requests.post(URL, headers=headers, json=payload, timeout=10)
+        response = requests.post(URL, headers=headers, data=json.dumps(payload), timeout=10)
         response.raise_for_status()
-    except requests.exceptions.RequestException as e:
+        data = response.json()
+
+        homes = data.get("data", {}).get("viewer", {}).get("homes", [])
+        if not homes:
+            logging.warning("No homes found in Tibber response.")
+            return None
+
+        for home in homes:
+            current_subscription = home.get("currentSubscription", {})
+            if current_subscription:
+                total_price = current_subscription.get("priceInfo", {}).get("current", {}).get("total")
+                if total_price is not None:
+                    logging.info(f"Spot price: {total_price}")
+                    return total_price
+                else:
+                    logging.warning("Total price not found for this home.")
+
+        logging.warning("Could not determine total price from any home.")
+        return None
+
+    except Exception as e:
         logging.error(f"Error making request to Tibber API: {e}")
         return None
 
-    data = response.json()
-    if "data" not in data or "viewer" not in data["data"]:
-        logging.error("Malformed response: missing 'data.viewer'")
-        return None
 
-    homes = data["data"]["viewer"].get("homes", [])
-    if not homes:
-        logging.warning("No homes found in Tibber response.")
-        return None
+def get_current_power_usage():
+    if not TIBBER_API_KEY:
+        logging.critical("TIBBER_API_KEY is not set. Please check your .env file.")
+        sys.exit(1)
 
-    for home in homes:
-        current_subscription = home.get("currentSubscription", {})
-        if current_subscription:
-            total_price = current_subscription.get("priceInfo", {}).get("current", {}).get("total")
-            if total_price is not None:
-                logging.info(f"Total price: {total_price}")
-                return total_price
-            else:
-                logging.warning("Total price not found for this home.")
-
-    logging.warning("Could not determine total price from any home.")
-    return None
-
-def get_live_power():
-    """
-    Fetches current power usage (and solar production if net metering is used) via Tibber Pulse.
-    Returns:
-        float: Current power in watts, or None.
-    """
     headers = {
         "Authorization": f"Bearer {TIBBER_API_KEY}",
         "Content-Type": "application/json"
     }
+
     query = """
     {
       viewer {
         homes {
-          consumptionLive {
-            power
-            timestamp
+          currentSubscription {
+            liveMeasurement {
+              power
+              timestamp
+            }
           }
         }
       }
@@ -122,7 +118,7 @@ def get_live_power():
     payload = {"query": query}
 
     try:
-        response = requests.post(URL, headers=headers, json=payload, timeout=10)
+        response = requests.post("wss://websocket-api.tibber.com/v1-beta/gql/subscriptions", headers=headers, data=json.dumps(payload), timeout=10)
         response.raise_for_status()
         data = response.json()
 
@@ -131,28 +127,34 @@ def get_live_power():
             logging.warning("No homes found in Tibber response.")
             return None
 
-        power = homes[0].get("consumptionLive", {}).get("power")
-        if power is not None:
-            logging.info(f"Current live power: {power} W")
-            return power
-        else:
-            logging.warning("Power data not available in consumptionLive.")
-            return None
+        for home in homes:
+            current_subscription = home.get("currentSubscription", {})
+            if current_subscription:
+                live_measurement = current_subscription.get("liveMeasurement", {})
+                power = live_measurement.get("power")
+                if power is not None:
+                    logging.info(f"Current power usage: {power} W")
+                    return power
+                else:
+                    logging.warning("Live power data not found for this home.")
 
-    except Exception as e:
-        logging.error(f"Error fetching live power: {e}")
+        logging.warning("Could not determine live power usage from any home.")
         return None
 
-# For testing only
+    except Exception as e:
+        logging.error(f"Error making request to Tibber API: {e}")
+        return None
+
+
 if __name__ == "__main__":
-    price = get_spot_price()
-    if price is not None:
-        print(f"Current spot price: {price} kr/kWh")
+    spot_price = get_spot_price()
+    if spot_price is not None:
+        print(f"Current spot price: {spot_price} kr/kWh")
     else:
         print("Failed to retrieve spot price.")
 
-    power = get_live_power()
-    if power is not None:
-        print(f"Current power usage: {power} W")
+    power_usage = get_current_power_usage()
+    if power_usage is not None:
+        print(f"Current power usage: {power_usage} W")
     else:
         print("Failed to retrieve power usage.")
