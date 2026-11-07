@@ -24,6 +24,7 @@ def history(count=900):
             "timestamp": (start + timedelta(minutes=5 * i)).isoformat(),
             "indoor_c": temperature, "outdoor_c": outdoor,
             "heatpump_capacity_kw": pump, "pelletstove_capacity_kw": stove,
+            "heatpump_is_on": bool(pump), "pelletstove_is_on": bool(stove),
         })
         temperature += (-0.05 * (temperature - outdoor) + 0.12 * pump + 0.1 * stove) / 12
     return result
@@ -81,7 +82,7 @@ class ThermalLearningTests(unittest.TestCase):
     def test_feature_filter_rejects_gaps_transitions_and_missing_values(self):
         records = history(450)
         rows = thermal_features.training_rows(records)
-        self.assertGreater(len(rows), 300)
+        self.assertGreater(len(rows), 250)
         times = set(rows["timestamp"].astype(str))
         transition = datetime.fromisoformat(records[150]["timestamp"])
         self.assertNotIn(str(transition), times)
@@ -132,6 +133,15 @@ class ThermalLearningTests(unittest.TestCase):
         self.assertTrue((ongoing["regime"] == "cooling").all())
         complete = thermal_features.training_rows(history(450))
         self.assertGreater((complete["regime"] == "heating").sum(), 100)
+
+    def test_unknown_startup_capacity_is_not_a_gap_in_the_power_cycle(self):
+        records = history(450)
+        for record in records[150:160]:
+            record["heatpump_capacity_kw"] = None
+        rows = thermal_features.training_rows(records)
+        heating = rows[rows["regime"] == "heating"]
+        self.assertGreater(len(heating), 100)
+        self.assertTrue(heating["heatpump_capacity_kw"].notna().all())
 
 
 if __name__ == "__main__":

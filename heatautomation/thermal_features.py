@@ -18,11 +18,12 @@ def training_rows(records):
     frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
     for column in columns[1:]:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    valid = (frame["timestamp"].notna()
+    temperatures_valid = (frame["timestamp"].notna()
+                          & frame["indoor_c"].between(-10, 50)
+                          & frame["outdoor_c"].between(-60, 60))
+    valid = (temperatures_valid
              & frame[columns[1:]].notna().all(axis=1)
              & np.isfinite(frame[columns[1:]]).all(axis=1)
-             & frame["indoor_c"].between(-10, 50)
-             & frame["outdoor_c"].between(-60, 60)
              & frame["heatpump_capacity_kw"].between(0, 30)
              & frame["pelletstove_capacity_kw"].between(0, 30))
     interval = frame["timestamp"].diff().dt.total_seconds()
@@ -31,13 +32,19 @@ def training_rows(records):
     # exclude incomplete cycles, gaps, startup and shutdown transients.
     state = (frame["heatpump_capacity_kw"] > 0).astype(int) + (
         frame["pelletstove_capacity_kw"] > 0).astype(int) * 2
-    boundary = (state.ne(state.shift()) | ~valid | ~valid_interval
-                | ~valid.shift(1, fill_value=False))
+    power = frame.reindex(columns=["heatpump_is_on", "pelletstove_is_on"])
+    cycle_valid = temperatures_valid & power["heatpump_is_on"].isin([True, False]) & \
+        power["pelletstove_is_on"].isin([True, False])
+    cycle_state = power["heatpump_is_on"].eq(True).astype(int) + \
+        2 * power["pelletstove_is_on"].eq(True).astype(int)
+    boundary = (cycle_state.ne(cycle_state.shift()) | ~cycle_valid | ~valid_interval
+                | ~cycle_valid.shift(1, fill_value=False))
     segments = boundary.cumsum()
-    started = (valid & valid.shift(1, fill_value=False) & valid_interval
-               & state.ne(state.shift()))
-    ended = (valid & valid.shift(-1, fill_value=False)
-             & valid_interval.shift(-1, fill_value=False) & state.ne(state.shift(-1)))
+    started = (cycle_valid & cycle_valid.shift(1, fill_value=False) & valid_interval
+               & cycle_state.ne(cycle_state.shift()))
+    ended = (cycle_valid & cycle_valid.shift(-1, fill_value=False)
+             & valid_interval.shift(-1, fill_value=False)
+             & cycle_state.ne(cycle_state.shift(-1)))
     complete_cycle = (started.groupby(segments).transform("any")
                       & ended.groupby(segments).transform("any"))
     stable = pd.Series(True, index=frame.index)

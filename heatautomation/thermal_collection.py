@@ -63,13 +63,18 @@ def collect(database, pump_capacity):
     if time.monotonic() - start > 120:
         logging.warning("Thermal observation took over two minutes; device capacities are unknown.")
         pump_kw = stove_kw = None
-    database.save(datetime.now(timezone.utc), {
+    sensor_values = {
         "indoor_c": _number(measurements.get("temperature")),
         "indoor_humidity_percent": _number(measurements.get("humidity")),
         "outdoor_c": outdoor,
         "price_sek_kwh": price,
         "target_c": _number(state.get("targetTemperature")),
-    }, {
+    }
+    missing = [name for name in ("indoor_c", "outdoor_c", "price_sek_kwh")
+               if sensor_values[name] is None]
+    if missing:
+        logging.warning("Thermal observation missing readings: %s", ", ".join(missing))
+    database.save(datetime.now(timezone.utc), sensor_values, {
         "heatpump": {"is_on": pump_on, "mode": pump_mode, "capacity_kw": pump_kw},
         "pelletstove": {"is_on": stove_on, "mode": stove_mode, "capacity_kw": stove_kw},
     })

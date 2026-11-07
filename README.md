@@ -108,8 +108,10 @@ temperature change in °C/hour. Training excludes missing and implausible
 readings, intervals outside 3.5–6.5 minutes, and samples without 30 minutes
 of continuous, unchanged source configuration both before and after the
 interval. Heating samples additionally require an observed start and end of
-the same uninterrupted source configuration; ongoing or interrupted cycles
-are excluded. It keeps all stored history to allow seasonal learning. Each regime
+the same uninterrupted provider-reported source power configuration. Unknown
+startup capacities can occur within that cycle but are not used as samples;
+ongoing or interrupted cycles are excluded. It keeps all stored history to
+allow seasonal learning. Each regime
 needs at least 120 qualifying intervals; models may therefore be unavailable
 for some time. A chronological holdout with a 30-minute separation reports
 one-step rate MAE and RMSE in `thermal_evaluations` on each successful
