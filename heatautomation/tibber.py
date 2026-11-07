@@ -21,10 +21,11 @@ import requests
 import json
 import logging
 import sys
+from pathlib import Path
 import websocket
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().with_name(".env"))
 
 TIBBER_API_KEY = os.getenv("TIBBER_API_KEY")
 URL = "https://api.tibber.com/v1-beta/gql"

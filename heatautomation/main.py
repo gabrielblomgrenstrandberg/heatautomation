@@ -22,12 +22,15 @@ import kmp
 import weather
 import time
 import os
+import threading
 from datalogger import log_data
 from datetime import datetime, timedelta
 import logging
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+GRID_POLL_INTERVAL_SECONDS = 5 * 60
 
 TEST_MODE = os.getenv("HEATAUTOMATION_TEST_MODE", "true").strip().lower() in {
     "1", "true", "yes", "on"
@@ -98,28 +101,109 @@ def decide_heating_source(outdoor_temp, spot_price, max_price_threshold=3.0, sco
     adjusted_threshold = max_price_threshold - 0.94875
     electricity_cost = calculate_energy_cost_with_scop(spot_price, heating_capacity, scop)
 
-    if electricity_cost <= adjusted_threshold and heating_capacity >= 3.0:
-        logging.info(f"Heat pump selected at {outdoor_temp}°C, {heating_capacity} kW, cost: {electricity_cost:.2f} SEK.")
+    cost_is_too_high = electricity_cost > adjusted_threshold
+    capacity_is_too_low = heating_capacity < 3.0
+    if not cost_is_too_high and not capacity_is_too_low:
+        logging.info(
+            "Heat pump selected: estimated electricity cost %.2f SEK is within "
+            "the %.2f SEK threshold and capacity %.1f kW meets the 3.0 kW minimum "
+            "at %s°C.",
+            electricity_cost,
+            adjusted_threshold,
+            heating_capacity,
+            outdoor_temp
+        )
         return "heatpump", heating_capacity
-    else:
-        logging.info(f"Pellet stove selected at {outdoor_temp}°C. Electricity cost too high or capacity too low.")
-        return "pelletstove", 5.0
+
+    reasons = []
+    if cost_is_too_high:
+        reasons.append(
+            "estimated electricity cost %.2f SEK exceeds the %.2f SEK threshold"
+            % (electricity_cost, adjusted_threshold)
+        )
+    if capacity_is_too_low:
+        reasons.append(
+            "heating capacity %.1f kW is below the 3.0 kW minimum"
+            % heating_capacity
+        )
+    logging.info(
+        "Pellet stove selected at %s°C because %s.",
+        outdoor_temp,
+        " and ".join(reasons)
+    )
+    return "pelletstove", 5.0
 
 # System availability check
 def check_systems():
+    sensibo_available = False
     try:
-        sensibo_status = sensibo.check_connection()
-        kmp_status = kmp.check_connection()
-        return sensibo_status, kmp_status
+        sensibo_status = sensibo.getSystemStatus()
+        if sensibo_status is None:
+            logging.warning("Sensibo status unavailable.")
+        else:
+            sensibo_available = True
+            logging.info(
+                "Sensibo status: on=%s, mode=%s, target temperature=%s°C.",
+                sensibo_status["is_on"],
+                sensibo_status["mode"],
+                sensibo_status["target_temperature"]
+            )
+            current_temperature = sensibo.getTemp()
+            if current_temperature is not None:
+                logging.info("Sensibo measured temperature: %s°C.", current_temperature)
     except Exception as e:
-        logging.error(f"Error checking systems: {e}")
-        return False, False
+        logging.error("Could not read Sensibo status: %s", e)
+
+    kmp_available = False
+    try:
+        kmp_status = kmp.get_status()
+        if kmp_status is None:
+            logging.warning("KMP status unavailable.")
+        else:
+            kmp_available = True
+            logging.info("KMP pellet stove mode: %s.", kmp_status["mode"])
+    except Exception as e:
+        logging.error("Could not read KMP status: %s", e)
+
+    return sensibo_available, kmp_available
+
+
+def grid_monitor_loop():
+    next_poll = time.monotonic()
+    while True:
+        sleep_seconds = next_poll - time.monotonic()
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+
+        readings = tibber.get_grid_import_export()
+        if readings is None:
+            logging.warning("Could not retrieve Tibber grid import/export readings.")
+        else:
+            logging.info(
+                "Grid electricity: import=%s W, export=%s W.",
+                readings.get("grid_import_w"),
+                readings.get("grid_export_w")
+            )
+
+        next_poll += GRID_POLL_INTERVAL_SECONDS
+        if next_poll <= time.monotonic():
+            next_poll = time.monotonic() + GRID_POLL_INTERVAL_SECONDS
+
 
 # Main program loop
 def main_loop():
     current_heat_type = "none"
+    threading.Thread(
+        target=grid_monitor_loop,
+        name="tibber-grid-monitor",
+        daemon=True
+    ).start()
+
     if TEST_MODE:
-        logging.info("TEST MODE is enabled. No device commands or connection checks will be made.")
+        logging.info(
+            "TEST MODE is enabled. Device settings will not be changed; "
+            "read-only status checks will be attempted."
+        )
 
     while True:
         spot_price = get_spot_price_safe()
@@ -147,13 +231,9 @@ def main_loop():
         else:
             logging.info(f"{heating_type.capitalize()} is already active.")
 
-        # System availability monitoring
-        if TEST_MODE:
-            logging.info("TEST MODE: skipping device availability checks.")
-        else:
-            sensibo_status, kmp_status = check_systems()
-            if not sensibo_status or not kmp_status:
-                logging.warning("One or more systems unavailable. Action taken.")
+        sensibo_status, kmp_status = check_systems()
+        if not sensibo_status or not kmp_status:
+            logging.warning("One or more systems unavailable or could not be read.")
 
         # Log data for ML training
         log_data(datetime.now(), spot_price, outdoor_temp, heating_type, heating_capacity)

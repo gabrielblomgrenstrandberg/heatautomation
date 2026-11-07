@@ -18,10 +18,8 @@
 
 import os
 import platform
-import time
 import logging
 import sys
-import shutil
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -48,17 +46,25 @@ def start_chrome():
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
 
-        # Find local chromedriver
-        chromedriver_path = shutil.which("chromedriver")
-        if not chromedriver_path:
-            logging.error("Could not find chromedriver in PATH.")
-            return None
+        chrome_binary_path = os.getenv("CHROME_BINARY_PATH")
+        if chrome_binary_path:
+            options.binary_location = chrome_binary_path
 
-        service = Service(executable_path=chromedriver_path)
-        chromedriver_path = shutil.which("chromedriver")
-        if not chromedriver_path:
-            raise RuntimeError("chromedriver not found in PATH")
-        driver = webdriver.Chrome(service=Service(chromedriver_path), options=options)
+        chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+        if chromedriver_path and os.path.basename(chromedriver_path).lower() in {
+            "chrome", "chrome.exe"
+        }:
+            raise ValueError(
+                "CHROMEDRIVER_PATH must point to chromedriver.exe, not the Chrome browser."
+            )
+
+        if chromedriver_path:
+            driver = webdriver.Chrome(
+                service=Service(executable_path=chromedriver_path),
+                options=options
+            )
+        else:
+            driver = webdriver.Chrome(options=options)
         logging.info("ChromeDriver started successfully.")
         return driver
 
@@ -76,15 +82,16 @@ def login(driver):
         driver.find_element(By.ID, "kpwd").send_keys(PASSWORD)
         driver.find_element(By.NAME, "stove").click()
         wait.until(EC.presence_of_element_located((By.ID, "mode")))
-        time.sleep(10)
     except Exception as e:
         logging.error(f"Login failed: {e}", exc_info=True)
         raise
 
 def get_mode(driver):
     try:
-        time.sleep(10)  # Wait for full load
-        return driver.find_element(By.ID, "mode").text
+        mode_element = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "mode"))
+        )
+        return mode_element.text
     except Exception as e:
         logging.error(f"Could not find the mode element: {e}", exc_info=True)
         return None
@@ -141,8 +148,26 @@ def pelletstove_error():
         driver.quit()
 
 def check_connection():
-    # TODO: Implement a check to see if the pellet stove is reachable
-    return True
+    return get_status() is not None
+
+
+def get_status():
+    """Log in to the KMP portal and read the stove mode without changing it."""
+    driver = start_chrome()
+    if driver is None:
+        return None
+
+    try:
+        login(driver)
+        mode = get_mode(driver)
+        if mode is None:
+            return None
+        return {"mode": mode}
+    except Exception as e:
+        logging.error("Could not read pellet stove status: %s", e)
+        return None
+    finally:
+        driver.quit()
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -166,4 +191,3 @@ if __name__ == "__main__":
         print("Felstatus:", pelletstove_error())
     else:
         print(f"Unknown command: {command}")
-
