@@ -21,12 +21,17 @@ import sensibo
 import kmp
 import smhi
 import time
+import os
 from datalogger import log_data
 from datetime import datetime, timedelta
 import logging
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+TEST_MODE = os.getenv("HEATAUTOMATION_TEST_MODE", "true").strip().lower() in {
+    "1", "true", "yes", "on"
+}
 
 # Retry helper function with exponential backoff
 def retry_function(func, retries=3, delay=5):
@@ -73,11 +78,17 @@ def calculate_energy_cost_with_scop(spot_price, heating_capacity, scop=3.8):
 
 # Turn on heat pump with retry logic
 def turn_on_heat_pump():
+    if TEST_MODE:
+        logging.info("TEST MODE: would turn on Sensibo and turn off KMP.")
+        return
     retry_function(sensibo.on)
     retry_function(kmp.off)
 
 # Turn on pellet stove with retry logic
 def turn_on_pellet_stove():
+    if TEST_MODE:
+        logging.info("TEST MODE: would turn on KMP and turn off Sensibo.")
+        return
     retry_function(kmp.on)
     retry_function(sensibo.off)
 
@@ -107,6 +118,8 @@ def check_systems():
 # Main program loop
 def main_loop():
     current_heat_type = "none"
+    if TEST_MODE:
+        logging.info("TEST MODE is enabled. No device commands or connection checks will be made.")
 
     while True:
         spot_price = get_spot_price_safe()
@@ -130,9 +143,12 @@ def main_loop():
             logging.info(f"{heating_type.capitalize()} is already active.")
 
         # System availability monitoring
-        sensibo_status, kmp_status = check_systems()
-        if not sensibo_status or not kmp_status:
-            logging.warning("One or more systems unavailable. Action taken.")
+        if TEST_MODE:
+            logging.info("TEST MODE: skipping device availability checks.")
+        else:
+            sensibo_status, kmp_status = check_systems()
+            if not sensibo_status or not kmp_status:
+                logging.warning("One or more systems unavailable. Action taken.")
 
         # Log data for ML training
         log_data(datetime.now(), spot_price, outdoor_temp, heating_type, heating_capacity)

@@ -28,6 +28,7 @@ setup(
     install_requires=[
         'requests',
         'python-dotenv',
+        'websocket-client',
         'selenium',
         'webdriver-manager',
     ],

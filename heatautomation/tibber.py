@@ -21,12 +21,14 @@ import requests
 import json
 import logging
 import sys
+import websocket
 from dotenv import load_dotenv
 
 load_dotenv()
 
 TIBBER_API_KEY = os.getenv("TIBBER_API_KEY")
 URL = "https://api.tibber.com/v1-beta/gql"
+WEBSOCKET_URL = "wss://websocket-api.tibber.com/v1-beta/gql/subscriptions"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -143,6 +145,113 @@ def get_current_power_usage():
 
     except Exception as e:
         logging.error(f"Error making request to Tibber API: {e}")
+        return None
+
+
+def get_grid_import_export():
+    """Return the latest Tibber Pulse grid import/export readings in watts."""
+    if not TIBBER_API_KEY:
+        logging.critical("TIBBER_API_KEY is not set. Please check your .env file.")
+        sys.exit(1)
+
+    headers = {
+        "Authorization": f"Bearer {TIBBER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    homes_query = """
+    query {
+      viewer {
+        homes {
+          id
+        }
+      }
+    }
+    """
+
+    try:
+        response = requests.post(
+            URL,
+            headers=headers,
+            json={"query": homes_query},
+            timeout=10
+        )
+        response.raise_for_status()
+        homes = response.json().get("data", {}).get("viewer", {}).get("homes", [])
+        if not homes:
+            logging.warning("No homes found in Tibber response.")
+            return None
+
+        home_id = homes[0].get("id")
+        if not home_id:
+            logging.warning("Home ID not found in Tibber response.")
+            return None
+
+        measurement_query = """
+        subscription {
+          liveMeasurement(homeId: %s) {
+            power
+            powerProduction
+          }
+        }
+        """ % json.dumps(home_id)
+        socket = websocket.create_connection(
+            WEBSOCKET_URL,
+            header=headers,
+            subprotocols=["graphql-transport-ws"],
+            timeout=10
+        )
+        try:
+            socket.send(json.dumps({"type": "connection_init"}))
+            subscribed = False
+
+            while True:
+                message = json.loads(socket.recv())
+                message_type = message.get("type")
+
+                if message_type == "ping":
+                    socket.send(json.dumps({
+                        "type": "pong",
+                        "payload": message.get("payload")
+                    }))
+                elif message_type == "connection_ack" and not subscribed:
+                    socket.send(json.dumps({
+                        "id": "1",
+                        "type": "subscribe",
+                        "payload": {"query": measurement_query}
+                    }))
+                    subscribed = True
+                elif message_type == "next":
+                    measurement = (
+                        message.get("payload", {})
+                        .get("data", {})
+                        .get("liveMeasurement")
+                    )
+                    if not measurement:
+                        logging.warning("Live Pulse measurement not found in Tibber response.")
+                        return None
+
+                    grid_import = measurement.get("power")
+                    grid_export = measurement.get("powerProduction")
+                    logging.info(
+                        "Tibber Pulse grid import: %s W, grid export: %s W",
+                        grid_import,
+                        grid_export
+                    )
+                    return {
+                        "grid_import_w": grid_import,
+                        "grid_export_w": grid_export
+                    }
+                elif message_type in ("error", "connection_error"):
+                    logging.error("Tibber WebSocket error: %s", message.get("payload"))
+                    return None
+                elif message_type == "complete":
+                    logging.warning("Tibber ended the live measurement subscription without data.")
+                    return None
+        finally:
+            socket.close()
+
+    except (requests.RequestException, websocket.WebSocketException, OSError, ValueError) as e:
+        logging.error("Error retrieving Tibber Pulse measurements: %s", e)
         return None
 
 
