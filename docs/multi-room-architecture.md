@@ -1,6 +1,72 @@
 # Multi-room heating architecture
 
-Status: **design only**. No application code has been changed, and automatic heating control stays disabled. This document describes the target architecture, the example physical configuration, the proposed SQL schema and migrations, the interface definitions, the thermal model, and the phased plan.
+## Read-only measurement and advisory foundation
+
+The codebase now contains a separate, **not automatically scheduled** advisory
+path. It does not replace the legacy MPC or call device commands. The physical
+configuration, runtime collection and model calibration described below are
+not yet wired end-to-end to this path.
+
+`thermal.measurements.Measurement` records the room, optional physical device,
+integration, connection method, observation/receipt times, quality and
+classification. `MeasurementStore` persists good or suspect values in the
+existing `room_measurements` table; migration `0008` adds source metadata.
+Invalid and unknown values are not stored as replacements for valid values.
+Read the latest value with its source integration and source reference to avoid
+mixing different zones after a remapping. Freshness is evaluated at read time:
+stale values remain historical values, not current input. Existing legacy
+rows have unknown source metadata and are preserved.
+
+`collect_tado_room` can query a mapped zone through the existing Tado service.
+It preserves the adapter's suspect temperature quality and uses the reported
+observation timestamp. It records demand as a reported percentage, **not
+delivered heat**. Since the adapter cannot identify the physical sensor,
+the device ID is unknown and the Tado home/zone is stored as the source
+reference. A target with no provider timestamp is returned as unknown and is
+not stored as a current measurement. Errors propagate and do not erase prior
+measurements. The collector is a callable, not a running background worker.
+
+`thermal.radiators.estimate_delivery` uses explicitly supplied radiator ratings,
+water temperatures, demand, generator availability, capacity, exponent and
+three configured delivery factors. It scales competing radiator estimates
+proportionally to shared capacity. These factors and the sharing model need
+installation-specific calibration; their low/nominal/high values are assumed
+scenarios, **not measured heat or confidence intervals**. Missing inputs
+produce an unknown estimate rather than zero. A generator explicitly reported
+off can only yield zero after the remaining scenario inputs are supplied.
+
+`control.room_advisory.predict_scenarios` consumes fresh measured room
+temperatures and matching demand measurements plus these estimates and
+explicit other-source heat scenarios. Suspect temperatures get extra
+user-supplied uncertainty; stale, invalid and missing temperatures or demand
+block prediction. It uses the existing coupled heat-balance model in five
+minute steps: a direct KMP input enters only its assigned room, and transfer
+to other rooms follows configured conductances. Other direct sources, including
+Sensibo and the heater behind a Mill outlet, require their own explicit
+estimated or measured scenarios; an empty mapping is an explicit declaration
+that a room has no other sources. Unknown sources must not be represented by
+empty mappings. The result is a one-step conditional prediction, not a
+thermostat command or an optimized achievable allocation. Cost remains
+unknown without a verified generator energy model.
+
+The new advisory function currently takes inputs from its caller rather than
+discovering all physical paths from the database. `save_advisory` optionally
+persists available outputs and assumptions in the existing optimizer tables,
+under a separate `advisory` mode. Callers must ensure all sources are
+included exactly once. Automatic multi-room polling, equipment configuration
+and measured SPRSUN output, forecast scenarios, validated parameter learning
+from these observations, and a user-facing advisory workflow remain future
+work. The existing room optimizer still uses idealized heat allocation and
+must not be treated as a direct Tado command.
+
+To upgrade an existing SQLite database, run
+`python -m heatautomation.house.migrate --database <path>`; it backs up the
+database before applying migrations. Do not copy example ratings or thermal
+parameters into a real installation as measured values.
+
+The remainder describes the target architecture and phased plan; portions
+have since been implemented. Automatic multi-room heating control remains
+disabled. The example configuration contains placeholder physical values.
 
 The example physical configuration is [config/house.example.json](../config/house.example.json). It uses placeholder physical values and is not loaded by the runtime. The real file will be `config/house.json`.
 

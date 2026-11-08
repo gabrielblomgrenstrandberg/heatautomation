@@ -244,6 +244,9 @@ room_measurements = Table(
     Column("received_at", DateTime(timezone=True), nullable=False),
     Column("source_device_id", String(36),
            ForeignKey("devices.id", ondelete="RESTRICT")),
+    Column("source_integration", String(64)),
+    Column("connection_method", String(32)),
+    Column("source_ref", String(128)),
     Column("quality", String(16), nullable=False),
     Column("classification", String(16), nullable=False),
     CheckConstraint(
