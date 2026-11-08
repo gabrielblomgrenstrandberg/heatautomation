@@ -26,8 +26,21 @@ Values must be true or false. Defaults are enabled to preserve existing setups.
 
 Disabled integrations are not polled or commanded by the controller or
 thermal collector; their measurements remain unknown, not zero or off.
-Automatic source switching is paused unless Sensibo, KMP, Tibber and weather
-are enabled. Shadow MPC can instead use a mapped Tado room for temperature
+Cost-based source control uses the enabled Sensibo and KMP heating sources:
+with one enabled source it uses the configured outdoor-temperature demand
+curve without needing Tibber prices; with both, it compares costs using Tibber.
+Weather is required for the demand curve. If an enabled source reports an
+unknown state, control is deferred rather than assuming it is off. When
+cost control is disabled, legacy price-based switching still requires both
+sources, Tibber and weather. Test mode never sends commands. This behavior
+can start or stop the sole enabled source when test mode is off; set the
+installation-specific demand curve correctly before enabling cost control.
+With a single source, no spot price is fetched for source selection and the
+legacy price-based CSV row is not written. Disabled providers are not treated
+as evidence that other physical heaters are absent. Tado is a thermostat
+integration, not a controllable substitute for Sensibo or a heat generator;
+this legacy controller does not issue automatic Tado commands.
+Shadow MPC can instead use a mapped Tado room for temperature
 and explicitly declared absent heat-pump or pellet-stove sources, as described
 below. A disabled integration alone does not establish that its equipment is
 absent. Enabled devices continue read-only monitoring, including in test mode.

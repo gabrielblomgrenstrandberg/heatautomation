@@ -69,13 +69,113 @@ class IntegrationSelectionTests(unittest.TestCase):
             self.assertEqual(main.check_systems(), (False, True))
             self.assertFalse(main.turn_on_heat_pump())
             self.assertFalse(main.turn_on_pellet_stove())
-            self.assertIsNone(main.CostController().observe())
+            self.assertEqual(main.CostController().observe(), {"pelletstove": False})
             main.FanAssist().poll()
             with self.assertRaises(PlanningUnavailable):
                 run_shadow_cycle(database, lambda _: 4)
             for mocked in (status, pump_status, pump_on, pump_off, stove_on, price, forecast):
                 mocked.assert_not_called()
-            self.assertEqual(stove.call_count, 2)
+            self.assertEqual(stove.call_count, 3)
+
+    def test_single_enabled_source_cost_selection_and_control(self):
+        for enabled, disabled, source in (
+                ("KMP_ENABLED", "SENSIBO_ENABLED", "pelletstove"),
+                ("SENSIBO_ENABLED", "KMP_ENABLED", "heatpump")):
+            with self.subTest(source=source), \
+                    patch.object(config, enabled, True), patch.object(config, disabled, False), \
+                    patch.object(main, "TEST_MODE", False), \
+                    patch.object(main.kmp, "get_status", return_value={"mode": "AV"}) as stove_status, \
+                    patch.object(main.sensibo, "getSystemStatus", return_value={"is_on": False}) as pump_status, \
+                    patch.object(main.kmp, "on", return_value=True) as stove_on, \
+                    patch.object(main.sensibo, "on", return_value={"ok": True}) as pump_on:
+                controller = main.CostController()
+                observed = controller.observe()
+                self.assertEqual(observed, {source: False})
+                controller.synchronize(observed, 0)
+                self.assertTrue(controller.transition(source, 10**9))
+                (stove_on if source == "pelletstove" else pump_on).assert_called_once()
+                (pump_on if source == "pelletstove" else stove_on).assert_not_called()
+                (pump_status if source == "pelletstove" else stove_status).assert_not_called()
+
+    def test_single_source_uses_demand_without_electricity_price(self):
+        model = main.heating_model
+        args = (0, None, 5, 6, 1, ((0, 3),), ((0, 4),), 0.1)
+        self.assertEqual(model.select(*args, enabled_sources={"pelletstove"}), ("pelletstove", 6))
+        self.assertEqual(model.select(*args, enabled_sources={"heatpump"}), ("heatpump", 5))
+        self.assertEqual(model.select(0, None, 5, 6, 1, ((0, 3),), ((0, 0),), 0.1,
+                                      enabled_sources={"pelletstove"}), ("none", 0))
+        with self.assertRaises(ValueError):
+            model.select(*args, enabled_sources={"heatpump", "pelletstove"})
+
+    def test_single_source_cycle_without_price_or_disabled_device_calls(self):
+        with patch.object(config, "SENSIBO_ENABLED", False), \
+                patch.object(config, "KMP_ENABLED", True), \
+                patch.object(main.kmp, "get_status", return_value={"mode": "AV"}), \
+                patch.object(main.kmp, "on") as stove, \
+                patch.object(main.sensibo, "getSystemStatus") as pump_status, \
+                patch.object(main.sensibo, "on") as pump, \
+                patch.object(main, "TEST_MODE", True), \
+                patch.object(main.time, "monotonic", side_effect=[0, 100000]):
+            controller = main.CostController()
+            main.cost_control_cycle(controller, 0, None)
+            self.assertEqual(main.cost_control_cycle(controller, 0, None)[0], "pelletstove")
+            stove.assert_not_called()
+            pump_status.assert_not_called()
+            pump.assert_not_called()
+
+    def test_unknown_enabled_source_blocks_other_source_commands(self):
+        with patch.object(config, "SENSIBO_ENABLED", True), \
+                patch.object(config, "KMP_ENABLED", True), \
+                patch.object(main.kmp, "get_status", return_value=None), \
+                patch.object(main.sensibo, "on") as pump:
+            self.assertIsNone(main.cost_control_cycle(main.CostController(), 0, 2))
+            pump.assert_not_called()
+
+    def test_single_stove_shutdown_obeys_kmp_safety_and_dwell(self):
+        with patch.object(config, "SENSIBO_ENABLED", False), \
+                patch.object(config, "KMP_ENABLED", True), \
+                patch.object(config, "MINIMUM_RUNTIME_SECONDS", 120), \
+                patch.object(config, "MINIMUM_SWITCH_INTERVAL_SECONDS", 60), \
+                patch.object(main, "TEST_MODE", False), \
+                patch.object(main.kmp, "off", return_value=False) as off, \
+                patch.object(main.sensibo, "off") as pump:
+            controller = main.CostController()
+            controller.synchronize({"pelletstove": True}, 0)
+            self.assertFalse(controller.transition("none", 119))
+            off.assert_not_called()
+            self.assertFalse(controller.transition("none", 120))
+            self.assertEqual(controller.current(), "pelletstove")
+            off.assert_called_once()
+            pump.assert_not_called()
+
+    def test_source_selection_never_accepts_disabled_or_unknown_source(self):
+        with patch.object(config, "SENSIBO_ENABLED", False), \
+                patch.object(config, "KMP_ENABLED", True), \
+                patch.object(main, "TEST_MODE", False), \
+                patch.object(main.kmp, "on") as stove, \
+                patch.object(main.sensibo, "on") as pump:
+            controller = main.CostController()
+            controller.synchronize({"pelletstove": False}, 0)
+            for desired in ("heatpump", "combined", "unexpected"):
+                self.assertFalse(controller.transition(desired, 10**9))
+            stove.assert_not_called()
+            pump.assert_not_called()
+
+    def test_two_sources_without_price_stay_in_monitoring_mode(self):
+        with patch.object(config, "SENSIBO_ENABLED", True), \
+                patch.object(config, "KMP_ENABLED", True), \
+                patch.object(config, "TIBBER_ENABLED", False), \
+                patch.object(config, "WEATHER_ENABLED", True), \
+                patch.object(config, "COST_CONTROL_ENABLED", True), \
+                patch.object(config, "THERMAL_LEARNING_ENABLED", False), \
+                patch.object(main, "FAN_ASSIST_ENABLED", False), \
+                patch.object(main, "check_systems") as checks, \
+                patch.object(main, "cost_control_cycle") as cycle, \
+                patch.object(main, "wait_until_next_quarter", side_effect=StopIteration):
+            with self.assertRaises(StopIteration):
+                main.main_loop()
+            checks.assert_called_once()
+            cycle.assert_not_called()
 
     def test_disabled_kmp_cannot_be_bypassed_by_direct_commands(self):
         with patch.object(config, "KMP_ENABLED", False), \
@@ -112,6 +212,7 @@ class IntegrationSelectionTests(unittest.TestCase):
     def test_disabled_integrations_keep_monitoring_but_pause_control(self):
         with patch.object(config, "SENSIBO_ENABLED", False), \
                 patch.object(config, "TIBBER_ENABLED", False), \
+                patch.object(config, "WEATHER_ENABLED", False), \
                 patch.object(config, "THERMAL_LEARNING_ENABLED", False), \
                 patch.object(main.threading, "Thread") as thread, \
                 patch.object(main, "check_systems") as checks, \
@@ -124,6 +225,28 @@ class IntegrationSelectionTests(unittest.TestCase):
             thread.assert_not_called()
             price.assert_not_called()
             control.assert_not_called()
+
+    def test_main_loop_runs_single_source_without_price(self):
+        for enabled, disabled in (("KMP_ENABLED", "SENSIBO_ENABLED"),
+                                  ("SENSIBO_ENABLED", "KMP_ENABLED")):
+            with self.subTest(source=enabled), patch.object(config, enabled, True), \
+                    patch.object(config, disabled, False), \
+                    patch.object(config, "TIBBER_ENABLED", False), \
+                    patch.object(config, "WEATHER_ENABLED", True), \
+                    patch.object(config, "COST_CONTROL_ENABLED", True), \
+                    patch.object(config, "THERMAL_LEARNING_ENABLED", False), \
+                    patch.object(main, "FAN_ASSIST_ENABLED", False), \
+                    patch.object(main, "get_spot_price_safe") as price, \
+                    patch.object(main.weather, "get_outdoor_temp", return_value=0), \
+                    patch.object(main, "cost_control_cycle", return_value=("pelletstove", 5)) as cycle, \
+                    patch.object(main, "log_data") as log, \
+                    patch.object(main, "wait_until_next_quarter", side_effect=StopIteration):
+                with self.assertRaises(StopIteration):
+                    main.main_loop()
+                cycle.assert_called_once()
+                self.assertEqual(cycle.call_args.args[1:], (0, None))
+                price.assert_not_called()
+                log.assert_not_called()
 
 
 if __name__ == "__main__":

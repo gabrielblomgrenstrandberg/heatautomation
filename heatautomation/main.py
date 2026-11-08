@@ -211,30 +211,28 @@ class CostController:
         self.uncertain = False
 
     def observe(self):
-        if not config.SENSIBO_ENABLED or not config.KMP_ENABLED:
-            logging.warning("Cost control disabled: both Sensibo and KMP must be enabled.")
+        if not config.SENSIBO_ENABLED and not config.KMP_ENABLED:
+            logging.warning("Cost control disabled: no controllable heating source is enabled.")
             self.uncertain = True
             return None
-        stove = kmp.get_status()
-        pump = sensibo.getSystemStatus()
-        if not stove or not pump:
-            logging.warning("Cost control deferred: device status is unavailable.")
-            self.uncertain = True
-            return None
-        mode = stove.get("mode")
-        power = pump.get("is_on")
-        if mode not in kmp.RUNNING_MODES | kmp.IDLE_MODES | kmp.OFF_MODES:
-            logging.warning("Cost control deferred: unknown KMP mode %s.", mode)
-            self.uncertain = True
-            return None
-        if not isinstance(power, bool) or (power and pump.get("mode") not in ("heat", "fan")):
-            logging.warning("Cost control deferred: Sensibo power or mode is unknown.")
-            self.uncertain = True
-            return None
-        return {
-            "pelletstove": mode not in kmp.OFF_MODES,
-            "heatpump": power and pump.get("mode") == "heat",
-        }
+        observed = {}
+        if config.KMP_ENABLED:
+            stove = kmp.get_status()
+            mode = stove.get("mode") if stove else None
+            if mode not in kmp.RUNNING_MODES | kmp.IDLE_MODES | kmp.OFF_MODES:
+                logging.warning("Cost control deferred: KMP mode unavailable or unknown.")
+                self.uncertain = True
+                return None
+            observed["pelletstove"] = mode not in kmp.OFF_MODES
+        if config.SENSIBO_ENABLED:
+            pump = sensibo.getSystemStatus()
+            power = pump.get("is_on") if pump else None
+            if not isinstance(power, bool) or (power and pump.get("mode") not in ("heat", "fan")):
+                logging.warning("Cost control deferred: Sensibo power or mode is unknown.")
+                self.uncertain = True
+                return None
+            observed["heatpump"] = power and pump.get("mode") == "heat"
+        return observed
 
     def synchronize(self, observed, now):
         global advanced_heat_required
@@ -250,11 +248,11 @@ class CostController:
         if self.uncertain:
             self.changed_at = {source: now for source in observed}
             self.uncertain = False
-        advanced_heat_required = self.state["heatpump"]
+        advanced_heat_required = self.state.get("heatpump", False)
 
     def current(self):
-        pump = self.state["heatpump"]
-        stove = self.state["pelletstove"]
+        pump = self.state.get("heatpump", False)
+        stove = self.state.get("pelletstove", False)
         if pump and stove:
             return "combined"
         if pump:
@@ -264,17 +262,20 @@ class CostController:
         return "none"
 
     def transition(self, desired, now):
-        if not config.SENSIBO_ENABLED or not config.KMP_ENABLED:
-            logging.warning("Cost control transition disabled: both heating integrations must be enabled.")
+        enabled = ({"heatpump"} if config.SENSIBO_ENABLED else set()) | (
+            {"pelletstove"} if config.KMP_ENABLED else set())
+        requested = ({"heatpump", "pelletstove"} if desired == "combined"
+                     else set() if desired == "none" else {desired})
+        if not enabled or not requested <= enabled or self.state is None or set(self.state) != enabled:
+            logging.warning("Cost control transition deferred: source selection or observed state is invalid.")
             return False
         global advanced_heat_required
-        wanted = {
-            "heatpump": desired in ("heatpump", "combined"),
-            "pelletstove": desired in ("pelletstove", "combined"),
-        }
+        wanted = {source: source in requested for source in enabled}
         # Start replacement sources before stopping any currently running source.
         for turning_on in (True, False):
             for source in ("pelletstove", "heatpump"):
+                if source not in enabled:
+                    continue
                 if wanted[source] != turning_on or self.state[source] == turning_on:
                     continue
                 elapsed = now - self.changed_at[source]
@@ -285,7 +286,7 @@ class CostController:
                     logging.info("Deferring %s change for %.0f seconds.", source, minimum - elapsed)
                     return False
                 if (source == "heatpump" and turning_on and desired == "heatpump"
-                        and self.state["pelletstove"]):
+                        and self.state.get("pelletstove", False)):
                     status = kmp.get_status()
                     if not kmp.can_turn_off(status.get("mode") if status else None):
                         logging.warning("Heat-pump switch deferred until the stove is idle.")
@@ -309,7 +310,7 @@ class CostController:
                         return False
                 self.state[source] = turning_on
                 self.changed_at[source] = now
-                advanced_heat_required = self.state["heatpump"]
+                advanced_heat_required = self.state.get("heatpump", False)
                 if turning_on and any(
                     self.state[name] and not wanted[name] for name in wanted
                 ):
@@ -333,6 +334,7 @@ def cost_control_cycle(controller, temperature, price):
             config.PELLET_COST_PER_KWH, config.COP_BY_TEMPERATURE,
             config.DEMAND_BY_TEMPERATURE, config.COST_HYSTERESIS,
             controller.current(), config.spotPriceLimit,
+            enabled_sources=set(observed),
         )
         logging.info("Cost-based selection: %s.", desired)
         if not controller.transition(desired, now):
@@ -625,20 +627,27 @@ def main_loop():
             "read-only status checks will be attempted."
         )
 
-    automatic_control = all((config.SENSIBO_ENABLED, config.KMP_ENABLED,
-                             config.TIBBER_ENABLED, config.WEATHER_ENABLED))
+    sources = int(config.SENSIBO_ENABLED) + int(config.KMP_ENABLED)
+    if cost_controller is not None:
+        automatic_control = bool(sources and config.WEATHER_ENABLED
+                                 and (sources == 1 or config.TIBBER_ENABLED))
+    else:
+        automatic_control = bool(sources == 2 and config.TIBBER_ENABLED
+                                 and config.WEATHER_ENABLED)
     if not automatic_control:
         logging.warning(
-            "Automatic source switching paused: Sensibo, KMP, Tibber and weather "
-            "must all be enabled. Enabled devices remain in monitoring-only mode."
+            "Automatic source control paused: cost control needs an enabled heat source "
+            "and weather, plus Tibber when comparing two sources; legacy switching "
+            "requires both sources, Tibber and weather. Enabled devices remain in monitoring-only mode."
         )
     while True:
         if not automatic_control:
             check_systems()
             wait_until_next_quarter()
             continue
-        spot_price = get_spot_price_safe()
-        if spot_price is None:
+        price_required = sources == 2 or cost_controller is None
+        spot_price = get_spot_price_safe() if price_required else None
+        if spot_price is None and price_required:
             logging.warning("No spot price available. Skipping cycle.")
             time.sleep(30)
             continue
@@ -651,7 +660,7 @@ def main_loop():
 
         if cost_controller is not None:
             selection = cost_control_cycle(cost_controller, outdoor_temp, spot_price)
-            if selection is not None:
+            if selection is not None and spot_price is not None:
                 heating_type, heating_capacity = selection
                 log_data(datetime.now(), spot_price, outdoor_temp, heating_type, heating_capacity)
             wait_until_next_quarter()

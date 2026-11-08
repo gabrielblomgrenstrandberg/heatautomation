@@ -15,9 +15,24 @@ def interpolate(curve, temperature):
 
 
 def select(temperature, price, capacity, pellet_capacity, pellet_cost, cop_curve,
-           demand_curve, hysteresis, current=None, spot_limit=0):
-    if not math.isfinite(temperature) or not math.isfinite(price):
-        raise ValueError("Temperature and electricity price must be finite")
+           demand_curve, hysteresis, current=None, spot_limit=0, enabled_sources=None):
+    enabled = {"heatpump", "pelletstove"} if enabled_sources is None else set(enabled_sources)
+    if not enabled or not enabled <= {"heatpump", "pelletstove"}:
+        raise ValueError("At least one supported heat source is required")
+    if not math.isfinite(temperature):
+        raise ValueError("Temperature must be finite")
+    if len(enabled) == 1:
+        demand = interpolate(demand_curve, temperature)
+        if demand <= 0:
+            return "none", 0.0
+        source = next(iter(enabled))
+        available = capacity if source == "heatpump" else pellet_capacity
+        if demand > available:
+            logging.warning("Estimated demand %.2f kW exceeds available %s capacity %.2f kW.",
+                            demand, source, available)
+        return source, available
+    if price is None or not math.isfinite(price):
+        raise ValueError("Electricity price must be finite when comparing heat sources")
     cop = interpolate(cop_curve, temperature)
     demand = interpolate(demand_curve, temperature)
     pump_cost = price / cop
