@@ -133,7 +133,7 @@ def run_shadow_cycle(database, pump_capacity, now=None):
     stove_on = latest.get("pelletstove_is_on")
     if (type(pump_on) is not bool or type(stove_on) is not bool
             or (pump_on and latest.get("heatpump_mode") != "heat")
-            or (stove_on and latest.get("pelletstove_mode") != "HÖGEFFEKT")
+            or (stove_on and latest.get("pelletstove_mode") not in {"HÖGEFFEKT", "VILAR..."})
             or (not stove_on and latest.get("pelletstove_mode") != "AV")):
         raise PlanningUnavailable("Device status is unknown or transitioning")
     settings = _settings()

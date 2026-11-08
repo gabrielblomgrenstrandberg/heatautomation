@@ -199,6 +199,25 @@ class SchedulerTests(unittest.TestCase):
                 SimpleNamespace(history=lambda: history), lambda _: 6, now
             )
 
+    def test_shadow_cycle_rejects_transitioning_stove_mode(self):
+        now = datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc)
+        history = [
+            {
+                "timestamp": (now - timedelta(minutes=30 - i * 5)).isoformat(),
+                "indoor_c": 20,
+                "heatpump_is_on": False,
+                "heatpump_mode": "heat",
+                "pelletstove_is_on": True,
+                "pelletstove_mode": "TÄNDNING",
+            }
+            for i in range(7)
+        ]
+        with self.assertRaisesRegex(
+                PlanningUnavailable, "Device status is unknown or transitioning"):
+            mpc_monitor.run_shadow_cycle(
+                SimpleNamespace(history=lambda: history), lambda _: 6, now
+            )
+
     def test_shadow_cycle_persists_and_evaluates_without_commands(self):
         now = datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc)
         model = predictor()
@@ -213,8 +232,8 @@ class SchedulerTests(unittest.TestCase):
             try:
                 for i in range(7):
                     db.save(now - timedelta(minutes=30 - i * 5), {"indoor_c": 20}, {
-                        "heatpump": {"is_on": True, "mode": "heat", "capacity_kw": 6},
-                        "pelletstove": {"is_on": False, "mode": "AV", "capacity_kw": 0},
+                        "heatpump": {"is_on": False, "mode": "heat", "capacity_kw": 0},
+                        "pelletstove": {"is_on": True, "mode": "VILAR...", "capacity_kw": 0},
                     })
                 with patch.object(mpc_monitor, "_settings", return_value=self.settings), \
                         patch.object(mpc_monitor, "ThermalPredictor", return_value=model), \
