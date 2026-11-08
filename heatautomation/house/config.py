@@ -1,13 +1,16 @@
 """Validated physical house configuration."""
 
 import hashlib
+import ipaddress
 import json
+import re
 from pathlib import Path
 from typing import List, Literal, Optional, Set
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..discovery.nmap import trusted_networks
 
 SupportedCapability = Literal[
     "read_temperature",
@@ -91,6 +94,52 @@ class TadoRoomMapping(StrictModel):
         return self
 
 
+class ProtectedMill(StrictModel):
+    ip_address: str
+    mac_address: str
+
+    @model_validator(mode="after")
+    def validate_identity(self):
+        try:
+            address = ipaddress.ip_address(self.ip_address)
+        except ValueError as error:
+            raise ValueError("Mill address must be an IPv4 address") from error
+        if address.version != 4:
+            raise ValueError("Mill address must be an IPv4 address")
+        mac = self.mac_address.upper()
+        if (not re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", mac)
+                or int(mac[:2], 16) & 1 or mac == "00:00:00:00:00:00"):
+            raise ValueError("Mill MAC address must be a unicast MAC address")
+        self.ip_address = str(address)
+        self.mac_address = mac
+        return self
+
+
+class LanDiscoveryConfig(StrictModel):
+    enabled: bool = False
+    allowed_cidrs: List[str] = Field(default_factory=list)
+    interval_seconds: int = Field(default=3600, ge=300, le=604800, strict=True)
+    poll_seconds: int = Field(default=300, ge=30, le=86400, strict=True)
+    freshness_seconds: int = Field(default=900, ge=30, le=604800, strict=True)
+    nmap_path: str = Field(default="nmap", min_length=1, max_length=1024)
+    mdns_enabled: bool = False
+    allow_unauthenticated_mill_http: bool = False
+    protected_mill: List[ProtectedMill] = Field(default_factory=list, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_networks(self):
+        if self.enabled or self.allowed_cidrs:
+            networks = trusted_networks(self.allowed_cidrs)
+            for device in self.protected_mill:
+                if not any(ipaddress.ip_address(device.ip_address) in network for network in networks):
+                    raise ValueError("Protected Mill addresses must be in an allowed CIDR")
+        macs = [device.mac_address for device in self.protected_mill]
+        addresses = [device.ip_address for device in self.protected_mill]
+        if len(set(macs)) != len(macs) or len(set(addresses)) != len(addresses):
+            raise ValueError("Protected Mill MAC addresses and addresses must be unique")
+        return self
+
+
 class HouseConfig(StrictModel):
     schema_version: Literal[1]
     house: House
@@ -101,6 +150,7 @@ class HouseConfig(StrictModel):
     room_priors: List[RoomPrior] = Field(default_factory=list)
     thermal_links: List[ThermalLink] = Field(default_factory=list)
     tado_rooms: List[TadoRoomMapping] = Field(default_factory=list)
+    lan_discovery: LanDiscoveryConfig = Field(default_factory=LanDiscoveryConfig)
 
     @model_validator(mode="after")
     def validate_references(self):
@@ -114,6 +164,11 @@ class HouseConfig(StrictModel):
         floors = {item.id for item in self.floors}
         rooms = {item.id for item in self.rooms}
         devices = {item.id: item for item in self.devices}
+        mill_ids = [device.external_id for device in self.devices
+                    if device.adapter == "mill" and device.external_id
+                    and re.fullmatch(r"mill:[0-9a-f]{12}", device.external_id)]
+        if len(mill_ids) != len(set(mill_ids)):
+            raise ValueError("A discovered Mill identity may only be assigned to one house device")
         path_ids = [item.id for item in self.heat_paths]
         if len(path_ids) != len(set(path_ids)):
             raise ValueError("Heat path IDs must be unique")

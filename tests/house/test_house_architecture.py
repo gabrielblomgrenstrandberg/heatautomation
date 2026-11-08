@@ -42,6 +42,15 @@ class HouseArchitectureTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             HouseConfig.model_validate(data)
 
+    def test_discovered_mill_identity_cannot_be_assigned_twice(self):
+        data = json.loads(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
+        mill = next(device for device in data["devices"] if device["adapter"] == "mill")
+        mill["external_id"] = "mill:001122334455"
+        duplicate = dict(mill, id="b333adf4-f78e-4e98-8fc7-4050d20d709a")
+        data["devices"].append(duplicate)
+        with self.assertRaisesRegex(ValueError, "only be assigned to one"):
+            HouseConfig.model_validate(data)
+
     def test_reconciliation_is_idempotent_and_preserves_learned_values(self):
         config = load_house_config(EXAMPLE_CONFIG)
         reconcile_house(self.engine, config)

@@ -21,6 +21,7 @@ from ..house.config import HouseConfig
 from .house_config import ConfigurationConflict, apply_configuration, read_configuration, save_configuration
 from .status import StatusUnavailable, read_status
 from .rooms import read_history, read_house, read_plan, read_schedules, set_override, set_room_settings, set_schedules
+from .discovery import read_discovery, request_scan
 
 
 class Login(BaseModel):
@@ -161,11 +162,42 @@ def create_app(password=None, database_path=None, origin=None, secure_cookie=Non
         except StatusUnavailable as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
+    @app.get("/api/integrations")
+    async def integrations(request: Request):
+        require_session(request)
+        enabled = {
+            "sensibo": config.SENSIBO_ENABLED,
+            "kmp": config.KMP_ENABLED,
+            "tibber": config.TIBBER_ENABLED,
+            "weather": config.WEATHER_ENABLED,
+        }
+        return {"enabled": enabled, "automatic_switching_available": all(enabled.values())}
+
     @app.get("/api/house")
     async def house(request: Request):
         require_session(request)
         try:
             return await run_in_threadpool(read_house, database_path)
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/api/discovery")
+    async def discovery(request: Request):
+        require_session(request)
+        try:
+            return await run_in_threadpool(read_discovery, database_path, house_config_path)
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.post("/api/discovery", status_code=202)
+    async def discover(request: Request):
+        require_session(request)
+        require_origin(request)
+        try:
+            await run_in_threadpool(request_scan, database_path, house_config_path)
+            return {"message": "Scan requested; the controller will process it subject to rate limits."}
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
         except StatusUnavailable as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 

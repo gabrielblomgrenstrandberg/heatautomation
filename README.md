@@ -12,6 +12,33 @@ A script for selecting the best heat source based on spot price and temperature
 Run the test suite from the repository root with
 `python -m unittest discover -s tests`.
 
+## Choose integrations
+
+The legacy controller's enabled providers are selected in the `[integrations]`
+section of `heatautomation/heatautomation.conf`. For a house without Sensibo,
+set `sensibo = false` and restart the controller and web server. The
+`HEATAUTOMATION_SENSIBO_ENABLED=false` environment variable or an entry in
+the ignored `heatautomation/.env` file takes precedence. Equivalent settings
+exist for `kmp`, `tibber`, and `weather`, using `HEATAUTOMATION_KMP_ENABLED`,
+`HEATAUTOMATION_TIBBER_ENABLED`, and `HEATAUTOMATION_WEATHER_ENABLED`.
+Values must be true or false. Defaults are enabled to preserve existing setups.
+
+Disabled integrations are not polled or commanded by the controller or
+thermal collector; their measurements remain unknown, not zero or off.
+Automatic source switching and shadow MPC are paused unless all four are
+enabled, because the existing two-source controller cannot safely infer the
+state or capacity of an absent source. Enabled devices continue read-only
+monitoring, including in test mode. This setting does not configure or enable
+the separate Tado or Mill services or optional LAN discovery. The dashboard
+shows the controller's configured selection; change settings locally and
+restart both processes rather than treating the dashboard as a control channel.
+
+Optional LAN discovery is disabled by default. It requires Nmap, explicitly
+trusted CIDRs and a migrated thermal database. The current implementation
+supports read-only Mill Gen 3 discovery only; KMP local connectivity and
+cloud/local fallback are not implemented. See
+[LAN discovery and verification gaps](./docs/lan-discovery.md) before enabling it.
+
 The multi-floor simulation integration scenarios can be run separately:
 
 ```powershell

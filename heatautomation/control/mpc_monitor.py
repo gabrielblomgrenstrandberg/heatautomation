@@ -75,6 +75,9 @@ def build_intervals(prices, forecast, start, pump_capacity):
 
 
 def run_shadow_cycle(database, pump_capacity, now=None):
+    if not all((config.SENSIBO_ENABLED, config.KMP_ENABLED,
+                config.TIBBER_ENABLED, config.WEATHER_ENABLED)):
+        raise PlanningUnavailable("Shadow MPC requires Sensibo, KMP, Tibber and weather integrations")
     now = now or datetime.now(timezone.utc)
     history = database.history()
     if len(history) < 7:

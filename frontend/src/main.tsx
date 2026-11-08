@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Activity, ArrowUpRight, CircleAlert, Flame, House, LogOut, Moon, Sun, Thermometer, Wind, Zap } from "lucide-react";
 import "./style.css";
 import Rooms, { type HouseData } from "./Rooms";
+import Discovery from "./Discovery";
 
 type Device = { on: boolean | null; mode: string | null; capacity_kw: number | null };
 type Status = {
@@ -21,6 +22,7 @@ type Status = {
 };
 type LiveMessage = { type: "status"; data: Status } | { type: "error"; message: string }
   | { type: "house"; data: HouseData } | { type: "house_error"; message: string };
+type Integrations = { enabled: Record<"sensibo" | "kmp" | "tibber" | "weather", boolean>; automatic_switching_available: boolean };
 
 function value(number: number | null | undefined, unit: string, digits = 1) {
   return number == null ? "—" : `${number.toFixed(digits)} ${unit}`;
@@ -34,6 +36,7 @@ function App() {
   const [connected, setConnected] = useState(false);
   const [house, setHouse] = useState<HouseData | null>(null);
   const [houseError, setHouseError] = useState("");
+  const [integrations, setIntegrations] = useState<Integrations | null>(null);
   const [dark, setDark] = useState(() => localStorage.getItem("theme") !== "light");
 
   useEffect(() => {
@@ -48,6 +51,15 @@ function App() {
       else throw new Error(`Status request failed (${response.status}).`);
     }).catch(() => { setError("Cannot connect to the monitoring service."); setAuthenticated(false); });
   }, []);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    fetch("/api/integrations").then(response => {
+      if (!response.ok) throw new Error("Cannot load integration settings.");
+      return response.json();
+    }).then(data => setIntegrations(data as Integrations))
+      .catch(() => setError("Cannot load integration settings."));
+  }, [authenticated]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -95,7 +107,7 @@ function App() {
     try {
       const response = await fetch("/api/session", { method: "DELETE" });
       if (!response.ok) throw new Error("Sign-out failed.");
-      setAuthenticated(false); setStatus(null); setHouse(null);
+      setAuthenticated(false); setStatus(null); setHouse(null); setIntegrations(null);
     } catch { setError("Sign-out failed. Check the connection and try again."); }
   }
 
@@ -131,6 +143,13 @@ function App() {
         {error && <div className="alert mt-7" role="alert"><CircleAlert size={18}/>{error}</div>}
         {status?.state === "stale" && <div className="alert mt-7" role="alert"><CircleAlert size={18}/>This observation is over 15 minutes old or has a future timestamp. Do not rely on it as current equipment status.</div>}
         {status?.state === "unavailable" && <div className="alert mt-7" role="alert"><CircleAlert size={18}/>{status.message}</div>}
+        {integrations && <section className="panel mt-7 p-5">
+          <div className="eyebrow">INTEGRATIONS</div>
+          <div className="mt-2 text-sm">{Object.entries(integrations.enabled).map(([name, enabled]) =>
+            <span className="mr-4" key={name}>{name}: {enabled ? "Enabled" : "Disabled"}</span>)}</div>
+          {!integrations.automatic_switching_available && <p className="mt-2 text-sm text-amber-600">Automatic source switching is paused. Enabled integrations continue monitoring.</p>}
+          <p className="mt-2 text-xs text-stone-500">Select integrations in heatautomation.conf or environment settings and restart the application.</p>
+        </section>}
         <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Metric icon={<House size={18}/>} label="INDOOR TEMPERATURE" main={value(status?.indoor_c, "°C")} detail={`Sensibo target ${value(status?.target_c, "°C")}`} accent />
           <Metric icon={<Wind size={18}/>} label="OUTDOOR TEMPERATURE" main={value(status?.outdoor_c, "°C")} detail="Weather observation" />
@@ -151,6 +170,7 @@ function App() {
             </div><p className="mt-4 text-xs leading-5 text-stone-500 dark:text-stone-400">Estimates use configured curves when cost control is enabled. They are not measured heat or actual operating costs.</p>
           </section>
         </div>
+        <Discovery/>
         <Rooms house={house} error={houseError}/>
         <footer className="mt-7 flex flex-wrap justify-between gap-2 text-xs text-stone-500 dark:text-stone-400"><span>Room settings do not dispatch commands · Control runs independently</span><span>Last observation: {status?.observed_at ? new Date(status.observed_at).toLocaleString() : "Unavailable"}</span></footer>
       </main>}

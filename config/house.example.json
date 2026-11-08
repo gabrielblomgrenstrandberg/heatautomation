@@ -1,5 +1,16 @@
 {
   "schema_version": 1,
+  "lan_discovery": {
+    "enabled": false,
+    "allowed_cidrs": [],
+    "interval_seconds": 3600,
+    "poll_seconds": 300,
+    "freshness_seconds": 900,
+    "nmap_path": "nmap",
+    "mdns_enabled": false,
+    "allow_unauthenticated_mill_http": false,
+    "protected_mill": []
+  },
   "house": {
     "id": "308bbf0b-a260-4155-b221-1bcea6a94540",
     "name": "Home"

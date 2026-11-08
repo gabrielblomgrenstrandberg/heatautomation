@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -10,6 +11,7 @@ from heatautomation.learning.database import ThermalDatabase
 from heatautomation.house.migrate import migrate_database
 from heatautomation.web.app import create_app
 from heatautomation.web.status import StatusUnavailable, read_status
+from heatautomation import config
 
 
 PASSWORD = "a sufficiently long test password 123456"
@@ -52,6 +54,14 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/status").json()["state"], "unavailable")
         self.assertEqual(self.client.delete("/api/session", headers={"origin": ORIGIN}).status_code, 204)
         self.assertEqual(self.client.get("/api/status").status_code, 401)
+
+    def test_integration_settings_are_authenticated_and_show_disabled_provider(self):
+        self.assertEqual(self.client.get("/api/integrations").status_code, 401)
+        self.login()
+        with patch.object(config, "SENSIBO_ENABLED", False):
+            data = self.client.get("/api/integrations").json()
+        self.assertFalse(data["enabled"]["sensibo"])
+        self.assertFalse(data["automatic_switching_available"])
 
     def test_login_throttling_and_password_policy(self):
         with self.assertRaises(RuntimeError):

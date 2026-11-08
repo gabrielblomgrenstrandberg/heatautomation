@@ -18,6 +18,48 @@ from sqlalchemy import (
 
 metadata = MetaData()
 
+lan_devices = Table(
+    "lan_devices", metadata,
+    Column("id", String(80), primary_key=True),
+    Column("device_type", String(32), nullable=False),
+    Column("name", String(256), nullable=False),
+    Column("ip_address", String(45)),
+    Column("hostname", String(256)),
+    Column("mac_address", String(32), nullable=False),
+    Column("connection_method", String(32), nullable=False),
+    Column("connection_state", String(32), nullable=False),
+    Column("last_connection", String(40)),
+    Column("last_measurement", String(40)),
+    Column("last_discovery", String(40)),
+    Column("last_error", String(256)),
+    Column("capabilities_json", Text, nullable=False),
+    Column("measurements_json", Text, nullable=False),
+)
+lan_scan_runs = Table(
+    "lan_scan_runs", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("started_at", String(40), nullable=False),
+    Column("finished_at", String(40)),
+    Column("state", String(32), nullable=False),
+    Column("error", String(256)),
+    Column("candidate_count", Integer),
+    Column("verified_count", Integer),
+)
+Index("ix_lan_scan_one_running", lan_scan_runs.c.state, unique=True,
+      sqlite_where=lan_scan_runs.c.state == "RUNNING")
+lan_scan_requests = Table(
+    "lan_scan_requests", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("requested_at", String(40), nullable=False),
+    Column("handled_at", String(40)),
+)
+lan_probe_errors = Table(
+    "lan_probe_errors", metadata,
+    Column("device_id", String(80), primary_key=True),
+    Column("checked_at", String(40), nullable=False),
+    Column("error", String(256), nullable=False),
+)
+
 houses = Table(
     "houses",
     metadata,

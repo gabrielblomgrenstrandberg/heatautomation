@@ -52,6 +52,9 @@ def retry_function(func, retries=3, delay=5):
 
 # Fetch spot price with retry logic
 def get_spot_price_safe():
+    if not config.TIBBER_ENABLED:
+        logging.warning("Tibber integration is disabled; spot price unavailable.")
+        return None
     return retry_function(tibber.get_spot_price)
 
 # Wait until the next full quarter hour
@@ -83,6 +86,9 @@ def turn_on_heat_pump():
 
 
 def _turn_on_heat_pump():
+    if not config.SENSIBO_ENABLED or not config.KMP_ENABLED:
+        logging.warning("Heat-pump switching disabled: both Sensibo and KMP must be enabled.")
+        return False
     if TEST_MODE:
         status = kmp.get_status()
         if not status or not kmp.can_turn_off(status.get("mode")):
@@ -105,6 +111,9 @@ def turn_on_pellet_stove():
 
 
 def _turn_on_pellet_stove():
+    if not config.SENSIBO_ENABLED or not config.KMP_ENABLED:
+        logging.warning("Pellet-stove switching disabled: both Sensibo and KMP must be enabled.")
+        return False
     if TEST_MODE:
         status = kmp.get_status()
         if not status or not kmp.can_turn_on(status.get("mode")):
@@ -136,6 +145,9 @@ class FanAssist:
         self.fan_level = None
 
     def poll(self):
+        if not config.SENSIBO_ENABLED or not config.KMP_ENABLED:
+            logging.warning("Fan assist disabled: both Sensibo and KMP must be enabled.")
+            return
         with CONTROL_LOCK:
             status = kmp.get_status()
             mode = status.get("mode") if status else None
@@ -198,6 +210,10 @@ class CostController:
         self.uncertain = False
 
     def observe(self):
+        if not config.SENSIBO_ENABLED or not config.KMP_ENABLED:
+            logging.warning("Cost control disabled: both Sensibo and KMP must be enabled.")
+            self.uncertain = True
+            return None
         stove = kmp.get_status()
         pump = sensibo.getSystemStatus()
         if not stove or not pump:
@@ -247,6 +263,9 @@ class CostController:
         return "none"
 
     def transition(self, desired, now):
+        if not config.SENSIBO_ENABLED or not config.KMP_ENABLED:
+            logging.warning("Cost control transition disabled: both heating integrations must be enabled.")
+            return False
         global advanced_heat_required
         wanted = {
             "heatpump": desired in ("heatpump", "combined"),
@@ -391,39 +410,44 @@ def decide_heating_source(
 # System availability check
 def check_systems():
     sensibo_available = False
-    try:
-        sensibo_status = sensibo.getSystemStatus()
-        if sensibo_status is None:
-            logging.warning("Sensibo status unavailable.")
-        else:
-            sensibo_available = True
-            logging.info(
-                "Sensibo status: on=%s, mode=%s, target temperature=%s°C.",
-                sensibo_status["is_on"],
-                sensibo_status["mode"],
-                sensibo_status["target_temperature"]
-            )
-            current_temperature = sensibo.getTemp()
-            if current_temperature is not None:
-                logging.info("Sensibo measured temperature: %s°C.", current_temperature)
-    except Exception as e:
-        logging.error("Could not read Sensibo status: %s", e)
+    if config.SENSIBO_ENABLED:
+        try:
+            sensibo_status = sensibo.getSystemStatus()
+            if sensibo_status is None:
+                logging.warning("Sensibo status unavailable.")
+            else:
+                sensibo_available = True
+                logging.info(
+                    "Sensibo status: on=%s, mode=%s, target temperature=%s°C.",
+                    sensibo_status["is_on"],
+                    sensibo_status["mode"],
+                    sensibo_status["target_temperature"]
+                )
+                current_temperature = sensibo.getTemp()
+                if current_temperature is not None:
+                    logging.info("Sensibo measured temperature: %s°C.", current_temperature)
+        except Exception as e:
+            logging.error("Could not read Sensibo status: %s", e)
 
     kmp_available = False
-    try:
-        kmp_status = kmp.get_status()
-        if kmp_status is None:
-            logging.warning("KMP status unavailable.")
-        else:
-            kmp_available = True
-            logging.info("KMP pellet stove mode: %s.", kmp_status["mode"])
-    except Exception as e:
-        logging.error("Could not read KMP status: %s", e)
+    if config.KMP_ENABLED:
+        try:
+            kmp_status = kmp.get_status()
+            if kmp_status is None:
+                logging.warning("KMP status unavailable.")
+            else:
+                kmp_available = True
+                logging.info("KMP pellet stove mode: %s.", kmp_status["mode"])
+        except Exception as e:
+            logging.error("Could not read KMP status: %s", e)
 
     return sensibo_available, kmp_available
 
 
 def grid_monitor_loop():
+    if not config.TIBBER_ENABLED:
+        logging.info("Tibber grid monitoring is disabled.")
+        return
     next_poll = time.monotonic()
     while True:
         sleep_seconds = next_poll - time.monotonic()
@@ -489,23 +513,26 @@ def thermal_monitor_loop():
 def main_loop():
     current_heat_type = "none"
     cost_controller = CostController() if config.COST_CONTROL_ENABLED else None
-    threading.Thread(
-        target=grid_monitor_loop,
-        name="tibber-grid-monitor",
-        daemon=True
-    ).start()
+    if config.TIBBER_ENABLED:
+        threading.Thread(
+            target=grid_monitor_loop,
+            name="tibber-grid-monitor",
+            daemon=True
+        ).start()
     if config.THERMAL_LEARNING_ENABLED:
         threading.Thread(
             target=thermal_monitor_loop,
             name="thermal-monitor",
             daemon=True
         ).start()
-    if FAN_ASSIST_ENABLED:
+    if FAN_ASSIST_ENABLED and config.SENSIBO_ENABLED and config.KMP_ENABLED:
         threading.Thread(
             target=fan_monitor_loop,
             name="pellet-fan-monitor",
             daemon=True
         ).start()
+    elif FAN_ASSIST_ENABLED:
+        logging.warning("Fan assist paused: Sensibo and KMP must both be enabled.")
 
     if TEST_MODE:
         logging.info(
@@ -513,7 +540,18 @@ def main_loop():
             "read-only status checks will be attempted."
         )
 
+    automatic_control = all((config.SENSIBO_ENABLED, config.KMP_ENABLED,
+                             config.TIBBER_ENABLED, config.WEATHER_ENABLED))
+    if not automatic_control:
+        logging.warning(
+            "Automatic source switching paused: Sensibo, KMP, Tibber and weather "
+            "must all be enabled. Enabled devices remain in monitoring-only mode."
+        )
     while True:
+        if not automatic_control:
+            check_systems()
+            wait_until_next_quarter()
+            continue
         spot_price = get_spot_price_safe()
         if spot_price is None:
             logging.warning("No spot price available. Skipping cycle.")
@@ -566,6 +604,11 @@ def main_loop():
 def run_application():
     from .web.startup import start_web_server, stop_web_server
 
+    try:
+        from .discovery.service import start_worker
+        start_worker(config.THERMAL_DATABASE_PATH)
+    except (ImportError, OSError, RuntimeError):
+        logging.exception("Could not start LAN discovery; heating control will continue.")
     server = start_web_server()
     try:
         main_loop()

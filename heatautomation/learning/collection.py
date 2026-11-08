@@ -21,11 +21,12 @@ def _number(value):
 
 def collect(database, pump_capacity):
     start = time.monotonic()
-    forecast = weather.get_forecast()
+    forecast = weather.get_forecast() if config.WEATHER_ENABLED else None
     outdoor = _number(forecast[0].get("temperature_c")) if forecast else None
-    price = _number(tibber.get_spot_price()) if config.TIBBER_API_KEY else None
-    pod = sensibo._first_result(sensibo.status(), "thermal observation")
-    stove = kmp.get_status()
+    price = _number(tibber.get_spot_price()) if config.TIBBER_ENABLED and config.TIBBER_API_KEY else None
+    pod = (sensibo._first_result(sensibo.status(), "thermal observation")
+           if config.SENSIBO_ENABLED else None)
+    stove = kmp.get_status() if config.KMP_ENABLED else None
     state = pod.get("acState") if pod else None
     sensor = pod.get("mainMeasurementsSensor") if pod else None
     measurements = sensor.get("measurements") if isinstance(sensor, dict) else None
@@ -64,7 +65,14 @@ def collect(database, pump_capacity):
         "price_sek_kwh": price,
         "target_c": _number(state.get("targetTemperature")),
     }
-    missing = [name for name in ("indoor_c", "outdoor_c", "price_sek_kwh")
+    expected = []
+    if config.SENSIBO_ENABLED:
+        expected.append("indoor_c")
+    if config.WEATHER_ENABLED:
+        expected.append("outdoor_c")
+    if config.TIBBER_ENABLED:
+        expected.append("price_sek_kwh")
+    missing = [name for name in expected
                if sensor_values[name] is None]
     if missing:
         logging.warning("Thermal observation missing readings: %s", ", ".join(missing))

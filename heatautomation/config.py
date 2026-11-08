@@ -62,6 +62,13 @@ def _boolean(section, name, environment=None):
     raise ValueError("Configuration [{}] {} must be true or false".format(section, name))
 
 
+def _integration_enabled(name):
+    environment = "HEATAUTOMATION_" + name.upper() + "_ENABLED"
+    if environment not in os.environ and not _settings.has_option("integrations", name):
+        return True
+    return _boolean("integrations", name, environment)
+
+
 def _capacities():
     rows = _value("heating", "heat_pump_capacity_by_temperature").splitlines()
     result = []
@@ -94,6 +101,10 @@ SOLIS_STATION_ID = os.getenv("SOLIS_STATION_ID", "")
 SOLIS_BASE_URL = _value("connections", "solis_base_url", "BASE_URL")
 CHROME_BINARY_PATH = _value("connections", "chrome_binary_path", "CHROME_BINARY_PATH") or None
 CHROMEDRIVER_PATH = _value("connections", "chromedriver_path", "CHROMEDRIVER_PATH") or None
+SENSIBO_ENABLED = _integration_enabled("sensibo")
+KMP_ENABLED = _integration_enabled("kmp")
+TIBBER_ENABLED = _integration_enabled("tibber")
+WEATHER_ENABLED = _integration_enabled("weather")
 
 WEATHER_LATITUDE = _number("weather", "latitude")
 WEATHER_LONGITUDE = _number("weather", "longitude")
