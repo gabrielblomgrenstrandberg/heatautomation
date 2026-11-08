@@ -38,6 +38,8 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+frontend/node_modules/
+frontend/dist/
 htmlcov/
 .tox/
 .nox/
@@ -66,6 +68,8 @@ thermal_history.sqlite3-shm
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+thermal_history.sqlite3*
+thermal_model.joblib*
 
 # Flask stuff:
 instance/

@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from test_heat_switch import main
+from heatautomation import main
 
 
 class FanCapabilityTests(unittest.TestCase):

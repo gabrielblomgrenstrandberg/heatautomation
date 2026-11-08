@@ -19,10 +19,7 @@
 import requests
 import logging
 
-if __package__:
-    from . import config
-else:
-    import config
+from .. import config
 
 # Static global variables
 DEVICE_ID = config.SENSIBO_DEVICE_ID

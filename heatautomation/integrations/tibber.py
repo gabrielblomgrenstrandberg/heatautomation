@@ -21,13 +21,44 @@ import json
 import logging
 import sys
 import websocket
-if __package__:
-    from .config import TIBBER_API_KEY
-else:
-    from config import TIBBER_API_KEY
+from ..config import TIBBER_API_KEY
 URL = "https://api.tibber.com/v1-beta/gql"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+def get_price_forecast():
+    """Return quarter-hourly total prices from the first subscribed home."""
+    if not TIBBER_API_KEY:
+        logging.error("Cannot fetch price forecast: TIBBER_API_KEY is not set.")
+        return None
+    query = """{
+      viewer { homes { currentSubscription {
+        priceInfo(resolution: QUARTER_HOURLY) {
+          today { startsAt total } tomorrow { startsAt total }
+        }
+      } } }
+    }"""
+    try:
+        response = requests.post(
+            URL, headers={"Authorization": "Bearer " + TIBBER_API_KEY},
+            json={"query": query}, timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("errors"):
+            logging.error("Tibber price forecast returned GraphQL errors.")
+            return None
+        homes = data["data"]["viewer"]["homes"]
+        for home in homes:
+            subscription = home.get("currentSubscription")
+            if subscription and subscription.get("priceInfo"):
+                info = subscription["priceInfo"]
+                return (info.get("today") or []) + (info.get("tomorrow") or [])
+        logging.warning("No Tibber price forecast available.")
+    except (requests.RequestException, ValueError, KeyError, TypeError) as error:
+        logging.error("Could not retrieve Tibber price forecast: %s", error)
+    return None
 
 
 def get_spot_price():

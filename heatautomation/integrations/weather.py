@@ -20,10 +20,7 @@ import logging
 
 import requests
 
-if __package__:
-    from .config import WEATHER_LATITUDE, WEATHER_LONGITUDE, WEATHER_TIMEZONE, FORECAST_HOURS
-else:
-    from config import WEATHER_LATITUDE, WEATHER_LONGITUDE, WEATHER_TIMEZONE, FORECAST_HOURS
+from ..config import WEATHER_LATITUDE, WEATHER_LONGITUDE, WEATHER_TIMEZONE, FORECAST_HOURS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 

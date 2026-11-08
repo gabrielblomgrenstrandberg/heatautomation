@@ -117,6 +117,15 @@ SENSIBO_MAX_FAN_LEVEL = _value(
 ) or None
 GRID_POLL_INTERVAL_SECONDS = _integer("operation", "grid_poll_interval_seconds")
 FAN_POLL_INTERVAL_SECONDS = _integer("operation", "fan_poll_interval_seconds")
+THERMAL_LEARNING_ENABLED = _boolean("thermal_learning", "enabled")
+THERMAL_DATABASE_PATH = _value("thermal_learning", "database_path")
+THERMAL_MODEL_PATH = _value("thermal_learning", "model_path")
+if not THERMAL_DATABASE_PATH or not THERMAL_MODEL_PATH:
+    raise ValueError("[thermal_learning] database_path and model_path must not be empty")
+
+MPC_ENABLED = _boolean("mpc", "enabled")
+if MPC_ENABLED and not THERMAL_LEARNING_ENABLED:
+    raise ValueError("[mpc] requires [thermal_learning] enabled")
 
 spotPriceLimit = _number("heating", "spotPriceLimit", "SPOT_PRICE_LIMIT", non_negative=True)
 MAX_PRICE_THRESHOLD = _number("heating", "max_price_threshold")

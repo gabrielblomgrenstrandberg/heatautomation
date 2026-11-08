@@ -14,7 +14,16 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# file: Dockerfile – Dockerfile for the Heat Automation project
+# Dockerfile for the Heat Automation project
+
+# Build the frontend separately; Node is not needed in the runtime image.
+FROM node:22 AS web-build
+WORKDIR /web
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/index.html frontend/tsconfig.json frontend/vite.config.ts frontend/tailwind.config.js frontend/postcss.config.js ./
+COPY frontend/src ./src
+RUN npm run build
 
 # Use RHEL 9 Universal Base Image minimal
 FROM registry.access.redhat.com/ubi9/ubi-minimal
@@ -73,9 +82,10 @@ ENV PATH=/usr/local/bin:$PATH
 # Set working directory and copy your app code
 WORKDIR /app
 COPY . /app
+COPY --from=web-build /web/dist /app/frontend/dist
 
 # Install python dependencies
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
+RUN python3 -m pip install --no-cache-dir -r requirements.txt -r requirements-web.txt
 
 # Default command to run your app
-CMD ["python3", "heatautomation/main.py"]
+CMD ["python3", "-m", "heatautomation.main"]

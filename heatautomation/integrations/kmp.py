@@ -28,10 +28,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import ElementClickInterceptedException
 
-if __package__:
-    from . import config
-else:
-    import config
+from .. import config
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -39,6 +36,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 USERNAME = config.KMP_USERNAME
 PASSWORD = config.KMP_PASSWORD
 PORTAL_URL = "http://portal.kmp-ab.se"
+PAGE_LOAD_TIMEOUT_SECONDS = 30
 RUNNING_MODES = frozenset({"LADDAR", "TÄNDNING", "UPPVÄRMNING", "HÖGEFFEKT"})
 IDLE_MODES = frozenset({"VILOLÄGE, SLÄCKER NED", "VILAR..."})
 OFF_MODES = frozenset({"AV", "AVSTÄNGD, SLÄCKER NED"})
@@ -84,6 +82,7 @@ def login(driver):
     try:
         if driver is None:
             raise RuntimeError("Failed to initialize the WebDriver. Please check the ChromeDriver setup.")
+        driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_SECONDS)
         driver.get(PORTAL_URL)
         wait = WebDriverWait(driver, 15)
         wait.until(EC.presence_of_element_located((By.ID, "kmac"))).send_keys(USERNAME)

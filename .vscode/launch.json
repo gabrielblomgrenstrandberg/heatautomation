@@ -5,7 +5,7 @@
             "name": "Heat Automation",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/heatautomation/main.py",
+            "module": "heatautomation.main",
             "python": "${workspaceFolder}/.venv/Scripts/python.exe",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
