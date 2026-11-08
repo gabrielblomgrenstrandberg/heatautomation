@@ -49,6 +49,15 @@ class TadoCommandDisabledError(TadoError):
     """The safety gate rejected a write request."""
 
 
+class TadoIntegrationDisabledError(TadoError):
+    """The Tado integration is disabled in application settings."""
+
+
+def _require_enabled():
+    if not config.TADO_ENABLED:
+        raise TadoIntegrationDisabledError("Tado integration is disabled")
+
+
 class TokenFile:
     """Persist rotating refresh tokens; callers must protect the parent directory."""
 
@@ -89,7 +98,7 @@ class TokenFile:
 
 
 class TadoService:
-    """Synchronous Tado Classic client. No network calls occur during construction."""
+    """Synchronous Tado Classic client. A house is optional for authorization."""
 
     def __init__(self, house_config, token_store, *, session=None, cache_seconds=300,
                  command_gate=None, timeout=10,
@@ -100,7 +109,8 @@ class TadoService:
             raise ValueError("timeout must be positive and finite")
         self._room_map = {
             str(mapping.room_id): (mapping.home_id, mapping.zone_id)
-            for mapping in house_config.tado_rooms if mapping.home_id is not None
+            for mapping in (house_config.tado_rooms if house_config is not None else ())
+            if mapping.home_id is not None
         }
         self._tokens = token_store
         self._session = session or requests.Session()
@@ -109,7 +119,7 @@ class TadoService:
         self._clock = monotonic
         self._room_devices = {}
         self._device_rooms = {}
-        for device in house_config.devices:
+        for device in (house_config.devices if house_config is not None else ()):
             if device.adapter == "tado" and device.kind == "thermostat":
                 room_id = str(device.room_id)
                 self._room_devices.setdefault(room_id, []).append(str(device.id))
@@ -130,6 +140,7 @@ class TadoService:
 
     def attach_command_gate(self, gate):
         """Register dispatchers with the existing audited command gate."""
+        _require_enabled()
         if self._command_gate is not None:
             raise TadoCommandDisabledError("A Tado command gate is already attached")
         if config.TEST_MODE and not gate.test_mode:
@@ -147,6 +158,7 @@ class TadoService:
         self._session.close()
 
     def _send(self, method, url, **kwargs):
+        _require_enabled()
         if self._clock() < self._blocked_until:
             raise TadoRateLimitError("Tado requests are temporarily rate-limited")
         try:
@@ -226,6 +238,7 @@ class TadoService:
 
     def poll_authentication(self):
         """Poll once; returns False while authorization is pending, True when complete."""
+        _require_enabled()
         with self._lock:
             flow = self._device_flow
             if flow is None:
@@ -292,6 +305,7 @@ class TadoService:
         self._accept_token(self._json(response))
 
     def _request(self, method, path, body=None):
+        _require_enabled()
         if not self._access_token or self._clock() >= self._expires_at:
             self._refresh()
         response = self._send(
@@ -314,6 +328,7 @@ class TadoService:
         return self._json(response)
 
     def _cached_get(self, path):
+        _require_enabled()
         with self._lock:
             entry = self._cache.get(path)
             if entry is not None and self._clock() < entry[0]:
@@ -365,6 +380,7 @@ class TadoService:
         return result
 
     def _mapped(self, room_id):
+        _require_enabled()
         try:
             return self._room_map[str(room_id)]
         except KeyError as error:
@@ -428,6 +444,7 @@ class TadoService:
         return self.get_room_status(room_id)["actual_temperature_c"]
 
     def get_heating_activity(self):
+        _require_enabled()
         return {room_id: self.get_room_status(room_id) for room_id in self._room_map}
 
     def get_devices(self, home_id):
@@ -449,6 +466,7 @@ class TadoService:
         }
 
     def _write(self, room_id, temperature=None, power="ON"):
+        _require_enabled()
         if (self._command_gate is None or self._command_gate.test_mode
                 or not self._command_gate.automatic_control_enabled or config.TEST_MODE):
             raise TadoCommandDisabledError("Tado dispatch is disabled in TEST_MODE")
@@ -516,6 +534,7 @@ class TadoService:
             cls._validate_temperature(temperature)
 
     def _request_command(self, room_id, command, payload):
+        _require_enabled()
         self._mapped(room_id)
         devices = self._room_devices.get(str(room_id), [])
         if len(devices) != 1:

@@ -171,7 +171,9 @@ def create_app(password=None, database_path=None, origin=None, secure_cookie=Non
             "tibber": config.TIBBER_ENABLED,
             "weather": config.WEATHER_ENABLED,
         }
-        return {"enabled": enabled, "automatic_switching_available": all(enabled.values())}
+        automatic_switching_available = all(enabled.values())
+        enabled["tado"] = config.TADO_ENABLED
+        return {"enabled": enabled, "automatic_switching_available": automatic_switching_available}
 
     @app.get("/api/house")
     async def house(request: Request):

@@ -11,7 +11,7 @@ from heatautomation.devices.command_gate import CommandGate
 from heatautomation.house import models
 from heatautomation.house.config import HouseConfig, load_house_config
 from heatautomation.integrations.tado import (
-    TadoAuthenticationError, TadoCommandDisabledError, TadoError,
+    TadoAuthenticationError, TadoCommandDisabledError, TadoError, TadoIntegrationDisabledError,
     TadoRateLimitError, TadoService, TadoUnsupportedError, TokenFile,
 )
 
@@ -88,6 +88,39 @@ class TadoTests(unittest.TestCase):
         data["tado_rooms"][1]["home_id"] = None
         with self.assertRaises(ValueError):
             HouseConfig.model_validate(data)
+
+    def test_disabled_blocks_cached_reads_authentication_and_commands(self):
+        self.session.responses = [tokens(), Response({"homes": [{"id": 1}]})]
+        self.assertEqual(self.service.get_homes(), [{"id": 1}])
+        self.session.calls.clear()
+        gate = unittest.mock.Mock()
+        gate.test_mode = True
+        gate.dispatchers = {}
+        self.service.attach_command_gate(gate)
+        with patch("heatautomation.integrations.tado.config.TADO_ENABLED", False):
+            for operation in (
+                self.service.get_homes, self.service.get_status,
+                self.service.get_heating_activity, self.service.begin_authentication,
+                self.service.poll_authentication,
+                lambda: self.service.get_room_status(self.rooms[0]),
+                lambda: self.service.set_room_temperature(self.rooms[0], 20),
+                lambda: self.service.set_heating_enabled(self.rooms[0], False),
+                lambda: self.service._write(self.rooms[0]),
+            ):
+                with self.subTest(operation=operation), self.assertRaises(TadoIntegrationDisabledError):
+                    operation()
+            gate.request.assert_not_called()
+            self.assertEqual(self.session.calls, [])
+        self.assertEqual(self.service.get_homes(), [{"id": 1}])
+
+    def test_disabled_cannot_attach_gate(self):
+        gate = unittest.mock.Mock()
+        gate.test_mode = True
+        gate.dispatchers = {}
+        with patch("heatautomation.integrations.tado.config.TADO_ENABLED", False):
+            with self.assertRaises(TadoIntegrationDisabledError):
+                self.service.attach_command_gate(gate)
+        self.assertEqual(gate.dispatchers, {})
 
     def test_device_authorization_pending_slowdown_and_token_rotation(self):
         self.session.responses = [

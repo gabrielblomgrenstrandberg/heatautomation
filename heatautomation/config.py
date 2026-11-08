@@ -102,6 +102,7 @@ SOLIS_BASE_URL = _value("connections", "solis_base_url", "BASE_URL")
 CHROME_BINARY_PATH = _value("connections", "chrome_binary_path", "CHROME_BINARY_PATH") or None
 CHROMEDRIVER_PATH = _value("connections", "chromedriver_path", "CHROMEDRIVER_PATH") or None
 SENSIBO_ENABLED = _integration_enabled("sensibo")
+TADO_ENABLED = _integration_enabled("tado")
 KMP_ENABLED = _integration_enabled("kmp")
 TIBBER_ENABLED = _integration_enabled("tibber")
 WEATHER_ENABLED = _integration_enabled("weather")

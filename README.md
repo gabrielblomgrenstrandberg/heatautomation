@@ -19,7 +19,8 @@ section of `heatautomation/heatautomation.conf`. For a house without Sensibo,
 set `sensibo = false` and restart the controller and web server. The
 `HEATAUTOMATION_SENSIBO_ENABLED=false` environment variable or an entry in
 the ignored `heatautomation/.env` file takes precedence. Equivalent settings
-exist for `kmp`, `tibber`, and `weather`, using `HEATAUTOMATION_KMP_ENABLED`,
+exist for `kmp`, `tado`, `tibber`, and `weather`, using
+`HEATAUTOMATION_KMP_ENABLED`, `HEATAUTOMATION_TADO_ENABLED`,
 `HEATAUTOMATION_TIBBER_ENABLED`, and `HEATAUTOMATION_WEATHER_ENABLED`.
 Values must be true or false. Defaults are enabled to preserve existing setups.
 
@@ -28,8 +29,12 @@ thermal collector; their measurements remain unknown, not zero or off.
 Automatic source switching and shadow MPC are paused unless all four are
 enabled, because the existing two-source controller cannot safely infer the
 state or capacity of an absent source. Enabled devices continue read-only
-monitoring, including in test mode. This setting does not configure or enable
-the separate Tado or Mill services or optional LAN discovery. The dashboard
+monitoring, including in test mode. `tado = false` also blocks calls to the
+standalone Tado service, including cached reads, authentication and simulated
+or real commands. Enabling Tado permits use of that service but does not start
+it, configure credentials, or enable automatic control. Tado is not required
+for legacy source switching. Integration settings do not configure or enable
+the separate Mill service or optional LAN discovery. The dashboard
 shows the controller's configured selection; change settings locally and
 restart both processes rather than treating the dashboard as a control channel.
 
@@ -337,6 +342,8 @@ plan.
 ## Tado Classic integration
 
 The standalone synchronous `TadoService` supports Classic/V3 cloud homes.
+It requires `tado = true` in `[integrations]` (or
+`HEATAUTOMATION_TADO_ENABLED=true`); restart after changing this setting.
 Tado X support is **not verified**. It uses Tado's device authorization and
 the unofficial Classic API, which can change without notice. It is not started
 by the controller and does not automatically control heating. Tado may impose
@@ -345,13 +352,27 @@ cache by default; 429 responses respect `Retry-After` when supplied and
 otherwise pause requests for 30 minutes. Errors are raised rather than
 returning expired cached data as fresh.
 
-Copy the example house configuration as described above. For initial
-authorization and discovery, run the following in a Python shell from the
-repository root. Choose a token path outside the repository in a directory
-accessible only to the application user:
+To authorize, run this from the repository root, open the displayed URL and
+enter the code. After browser approval the command retrieves and saves the
+token automatically; no house configuration is required for this step.
+
+```shell
+python -m heatautomation.integrations.tado_auth
+```
+
+By default the refresh token is stored at
+`~/.heatautomation/tado-token.json`. Use `--token-file` to choose another
+private location, and `--reauthorize` to replace an existing token. The
+service refreshes and saves rotating tokens automatically. Tado removed
+[password-grant authentication](https://help.tado.com/en/articles/8565472-how-do-i-authenticate-to-access-the-rest-api);
+`TADO_EMAIL` and `TADO_PASSWORD` are not used. Initial browser approval is
+required, even in TEST_MODE.
+
+Copy the example house configuration as described above. For discovery, run
+the following in a Python shell from the repository root, using the same
+token path:
 
 ```python
-import time
 from pathlib import Path
 from heatautomation.house.config import load_house_config
 from heatautomation.integrations.tado import TadoService, TokenFile
@@ -359,11 +380,6 @@ from heatautomation.integrations.tado import TadoService, TokenFile
 house = load_house_config("config/house.json")
 token_file = TokenFile(Path.home() / ".heatautomation" / "tado-token.json")
 tado = TadoService(house, token_file)
-if token_file.load() is None:
-    auth = tado.begin_authentication()
-    print("Open", auth["verification_uri"], "and enter", auth["user_code"])
-    while not tado.poll_authentication():
-        time.sleep(auth["interval"])
 print(tado.get_homes())
 print(tado.get_rooms())
 tado.close()

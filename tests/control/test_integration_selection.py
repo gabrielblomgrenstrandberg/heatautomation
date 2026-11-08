@@ -15,6 +15,23 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class IntegrationSelectionTests(unittest.TestCase):
+    def test_tado_environment_override_and_invalid_values(self):
+        env = os.environ.copy()
+        env["HEATAUTOMATION_TADO_ENABLED"] = "false"
+        result = subprocess.run(
+            [sys.executable, "-c", "from heatautomation import config; print(config.TADO_ENABLED)"],
+            cwd=str(ROOT), env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "False")
+        env["HEATAUTOMATION_TADO_ENABLED"] = "invalid"
+        result = subprocess.run(
+            [sys.executable, "-c", "from heatautomation import config"],
+            cwd=str(ROOT), env=env, capture_output=True, text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must be true or false", result.stderr)
+
     def test_environment_overrides_and_invalid_values(self):
         env = os.environ.copy()
         env["HEATAUTOMATION_SENSIBO_ENABLED"] = "false"

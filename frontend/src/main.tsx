@@ -22,7 +22,7 @@ type Status = {
 };
 type LiveMessage = { type: "status"; data: Status } | { type: "error"; message: string }
   | { type: "house"; data: HouseData } | { type: "house_error"; message: string };
-type Integrations = { enabled: Record<"sensibo" | "kmp" | "tibber" | "weather", boolean>; automatic_switching_available: boolean };
+type Integrations = { enabled: Record<"sensibo" | "kmp" | "tibber" | "weather" | "tado", boolean>; automatic_switching_available: boolean };
 
 function value(number: number | null | undefined, unit: string, digits = 1) {
   return number == null ? "—" : `${number.toFixed(digits)} ${unit}`;
@@ -147,7 +147,7 @@ function App() {
           <div className="eyebrow">INTEGRATIONS</div>
           <div className="mt-2 text-sm">{Object.entries(integrations.enabled).map(([name, enabled]) =>
             <span className="mr-4" key={name}>{name}: {enabled ? "Enabled" : "Disabled"}</span>)}</div>
-          {!integrations.automatic_switching_available && <p className="mt-2 text-sm text-amber-600">Automatic source switching is paused. Enabled integrations continue monitoring.</p>}
+          {!integrations.automatic_switching_available && <p className="mt-2 text-sm text-amber-600">Automatic source switching is paused. Configured monitoring continues.</p>}
           <p className="mt-2 text-xs text-stone-500">Select integrations in heatautomation.conf or environment settings and restart the application.</p>
         </section>}
         <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">

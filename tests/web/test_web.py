@@ -63,6 +63,17 @@ class WebTests(unittest.TestCase):
         self.assertFalse(data["enabled"]["sensibo"])
         self.assertFalse(data["automatic_switching_available"])
 
+    def test_tado_status_does_not_change_legacy_switching_availability(self):
+        self.login()
+        with patch.object(config, "SENSIBO_ENABLED", True), \
+                patch.object(config, "KMP_ENABLED", True), \
+                patch.object(config, "TIBBER_ENABLED", True), \
+                patch.object(config, "WEATHER_ENABLED", True), \
+                patch.object(config, "TADO_ENABLED", False):
+            data = self.client.get("/api/integrations").json()
+        self.assertFalse(data["enabled"]["tado"])
+        self.assertTrue(data["automatic_switching_available"])
+
     def test_login_throttling_and_password_policy(self):
         with self.assertRaises(RuntimeError):
             create_app(password="short", database_path=self.path)
