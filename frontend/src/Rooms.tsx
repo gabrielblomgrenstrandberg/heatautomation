@@ -11,6 +11,7 @@ type Room = {
   prediction_at: string | null;
   comfort: "cold" | "warm" | "comfortable" | "unknown";
   override_expires_at: string | null; devices: Device[];
+  heat_inputs: { observed_at: string; sources: { id: string; watts: number; classification: "measured" | "estimated" }[] } | null;
   sources: { id: string; name: string; type: string }[];
 };
 export type HouseData = {
@@ -24,6 +25,8 @@ type History = {
   predictions: { at: string; predicted_c: number; actual_c: number | null }[];
   target_history: { at: string; value: number; source: string }[];
   source_contribution_history: { at: string; source_id: string; watts: number; classification: "measured" | "estimated" }[];
+  heating_activity_history: { at: string; value: number; source_device_id: string | null }[];
+  measured_expenditure: { at: string; value: number; source_device_id: string | null }[];
 };
 type Plan = { created_at: string; intervals: { room_id: string; start: string; data: {
   predicted_temperature_c: number; target_c: number; heating_demand_kw?: number;
@@ -102,6 +105,19 @@ function TargetChart({ history }: { history: History }) {
   </svg><p className="text-xs text-stone-500">Recorded web changes to the base target only; this is not historical effective schedule or override data.</p></div>;
 }
 
+function RecordedChart({ rows, title, unit }: { rows: { at: string; value: number }[]; title: string; unit: string }) {
+  const points = rows.filter(row => Number.isFinite(row.value) && Number.isFinite(Date.parse(row.at)));
+  if (!points.length) return <p className="mt-2 text-sm text-stone-500">No verified {title.toLowerCase()} measurements recorded.</p>;
+  const times = points.map(row => Date.parse(row.at));
+  const first = Math.min(...times), last = Math.max(...times);
+  const values = points.map(row => row.value), low = Math.min(0, ...values), high = Math.max(low + 1, ...values);
+  return <div className="mt-3"><svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-32 w-full" role="img" aria-label={title}>
+    {points.map((row, i) => <circle key={i} cx={first === last ? 50 : 2 + 96 * (times[i] - first) / (last - first)}
+      cy={95 - 90 * (row.value - low) / (high - low)} r="1.5" className="fill-teal-500">
+      <title>{show(row.value, unit)} at {new Date(row.at).toLocaleString()}</title></circle>)}
+  </svg><p className="text-xs text-stone-500">Measured samples · scale {show(low, unit)}–{show(high, unit)}</p></div>;
+}
+
 export default function Rooms({ house, error }: { house: HouseData | null; error: string }) {
   const [floor, setFloor] = useState("");
   const [selected, setSelected] = useState("");
@@ -158,6 +174,12 @@ export default function Rooms({ house, error }: { house: HouseData | null; error
     } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Could not save settings"); }
   }
   const names = new Map(house?.rooms.map(item => [item.id, item.name]));
+  const now = Date.now();
+  const currentPlan = plan && now >= Date.parse(plan.created_at) && now - Date.parse(plan.created_at) <= 36 * 3600000
+    ? plan.intervals.filter(item => {
+      const start = Date.parse(item.start);
+      return start <= now && now < start + 15 * 60000;
+    }) : [];
   return <section className="mt-8 space-y-5">
     <div><div className="eyebrow">MULTI-ROOM / SIMULATION</div><h2 className="mt-2 text-2xl font-semibold">House overview</h2>
       <p className="mt-2 text-sm text-stone-500">Room values and plans are observations or estimates, not proof of delivered heat.</p></div>
@@ -167,15 +189,19 @@ export default function Rooms({ house, error }: { house: HouseData | null; error
         <button key={item.id} className={floor === item.id ? "primary-button" : "status-pill"} onClick={() => { setFloor(item.id); setSelected(""); }}>{item.name}</button>)}</div>
       {!house.floors.length && <div className="panel p-6">No floors configured.</div>}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {house.rooms.filter(item => item.floor_id === floor).map(item =>
-          <button key={item.id} onClick={() => setSelected(item.id)} className="panel p-5 text-left hover:border-teal-500">
+        {house.rooms.filter(item => item.floor_id === floor).map(item => {
+          const planned = currentPlan.find(interval => interval.room_id === item.id);
+          return <button key={item.id} onClick={() => setSelected(item.id)} className="panel p-5 text-left hover:border-teal-500">
             <div className="flex items-center justify-between"><strong>{item.name}</strong><span className={`rounded-full px-2 py-1 text-xs ${item.comfort === "cold" ? "bg-blue-100 text-blue-800" : item.comfort === "warm" ? "bg-orange-100 text-orange-800" : item.comfort === "comfortable" ? "bg-emerald-100 text-emerald-800" : "bg-stone-200 text-stone-700"}`}>{item.comfort}</span></div>
             <div className="mt-4 text-2xl font-semibold">{show(item.temperature_c)}</div>
             <div className="mt-2 text-sm text-stone-500">Effective target {show(item.target_c)} · Prediction {show(item.predicted_c)}</div>
             {item.prediction_at && <div className="mt-1 text-xs text-stone-500">Prediction for {new Date(item.prediction_at).toLocaleString()}</div>}
             <div className="mt-2 text-xs text-stone-500">Demand unknown · Activity unknown · Active source unknown</div>
+            {planned && <div className="mt-2 text-xs text-stone-500">Simulation: demand {show(planned.data.heating_demand_kw, "kW")} · planned sources {planned.data.selected_sources.map(id => item.sources.find(s => s.id === id)?.name || id).join(", ") || "none"}</div>}
+            {item.heat_inputs && <div className="mt-2 text-xs text-stone-500">Heat inputs at {new Date(item.heat_inputs.observed_at).toLocaleTimeString()}: {item.heat_inputs.sources.map(source => `${item.sources.find(s => s.id === source.id)?.name || source.id} ${show(source.watts, "W")} (${source.classification})`).join(", ")}</div>}
             <div className="mt-2 text-xs text-stone-500">Connection: {item.devices.map(d => `${d.name}: ${d.connectivity}`).join(", ") || "unknown"}{item.temperature_stale ? " · Temperature stale" : ""}</div>
-          </button>)}
+          </button>;
+        })}
       </div>
       <section className="panel p-6"><div className="eyebrow">HEAT DISTRIBUTION</div><h3 className="mt-2 text-xl font-semibold">Configured heat paths and room links</h3>
         <p className="mt-2 text-sm text-stone-500">Generators heat assigned rooms directly. Room links represent possible transfer, not measured KMP output or fixed shares. Tado controls radiators supplied by the radiator generator; Mill controls the storage heater.</p>
@@ -209,13 +235,17 @@ export default function Rooms({ house, error }: { house: HouseData | null; error
         </section>
         <section className="panel p-6"><div className="eyebrow">ROOM HISTORY</div><h3 className="mt-2 text-xl font-semibold">Temperature</h3>
           <div className="mt-5">{history ? <TemperatureChart history={history}/> : "Loading…"}</div>
-          <p className="mt-4 text-xs text-stone-500">Equipment activity and expenditure history are not recorded yet.</p>
+          <p className="mt-4 text-xs text-stone-500">Activity and expenditure charts require independently recorded measurements; device commands and estimated costs are excluded.</p>
           <h4 className="mt-5 font-semibold">Base-target changes</h4>
           {history && <TargetChart history={history}/>}
           <h4 className="mt-5 font-semibold">Predicted versus actual</h4>
           {history && <PredictionChart history={history}/>}
           <h4 className="mt-5 font-semibold">Recorded heat contribution</h4>
           {history && <HeatInputChart history={history} names={new Map(house.rooms.flatMap(r => r.sources.map(s => [s.id, s.name] as [string, string])))}/>}
+          <h4 className="mt-5 font-semibold">Measured heating activity</h4>
+          {history && <RecordedChart rows={history.heating_activity_history} title="Heating activity" unit="%"/>}
+          <h4 className="mt-5 font-semibold">Measured heating expenditure</h4>
+          {history && <RecordedChart rows={history.measured_expenditure} title="Heating expenditure" unit="SEK"/>}
         </section>
       </div>}
       {room && <RoomSchedules roomId={room.id}/>}

@@ -104,14 +104,29 @@ class RoomWebTests(unittest.TestCase):
             conn.execute(insert(models.room_thermal_snapshots).values(
                 observed_at=now, data_json=json.dumps({"heat_inputs": {
                     self.room_id: {"generator-id": {"watts": 500, "classification": "estimated"}}}})))
+            for quantity, unit, value, classification, quality in (
+                    ("heating_activity", "percent", 40, "measured", "good"),
+                    ("heating_activity", "percent", 70, "estimated", "good"),
+                    ("heating_expenditure", "SEK", 1.5, "measured", "good"),
+                    ("heating_expenditure", "SEK", 8, "measured", "bad")):
+                conn.execute(insert(models.room_measurements).values(
+                    room_id=self.room_id, quantity=quantity, value=value, unit=unit,
+                    observed_at=now, received_at=now, source_device_id=device_id,
+                    quality=quality, classification=classification))
         house = self.client.get("/api/house").json()
         room = next(r for r in house["rooms"] if r["id"] == self.room_id)
         self.assertEqual(room["temperature_c"], 19.5)
         self.assertIsNone(room["predicted_c"])
         self.assertEqual(next(d for d in room["devices"] if d["id"] == device_id)["connectivity"], "unknown")
+        self.assertEqual(room["heat_inputs"]["sources"][0]["watts"], 500)
+        self.assertEqual(room["heat_inputs"]["sources"][0]["classification"], "estimated")
+        self.assertIsNone(room["heating_activity"])
         heat = self.client.get(f"/api/rooms/{self.room_id}/history").json()["source_contribution_history"]
         self.assertEqual(heat[0]["watts"], 500)
         self.assertEqual(heat[0]["classification"], "estimated")
+        history = self.client.get(f"/api/rooms/{self.room_id}/history").json()
+        self.assertEqual([row["value"] for row in history["heating_activity_history"]], [40])
+        self.assertEqual([row["value"] for row in history["measured_expenditure"]], [1.5])
         with self.client.websocket_connect("/api/live", headers={"origin": ORIGIN}) as websocket:
             self.assertEqual(websocket.receive_json()["type"], "status")
             self.assertEqual(websocket.receive_json()["type"], "house")

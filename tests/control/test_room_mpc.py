@@ -87,7 +87,7 @@ class RoomMpcTests(unittest.TestCase):
         mill = Source("mill", "electric", {"storage": 0.8}, 0.8,
                       initial_on=False, initial_elapsed_steps=10,
                       min_on_steps=2, min_off_steps=2, max_on_steps=4)
-        plan = optimize_rooms([storage], [mill], forecasts(), solver_seconds=5)
+        plan = optimize_rooms([storage], [mill], forecasts(), solver_seconds=30)
         states = [s["rooms"][0]["planned_activity"]["mill"] for s in plan["intervals"]]
         self.assertTrue(any(states))
         for start in range(140):

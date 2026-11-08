@@ -86,6 +86,13 @@ requested logs. Those require explicitly instrumented controller-side data,
 with retention, privacy, migrations and provenance defined before displaying
 them; never invent values or treat estimates as measurements.
 
+The room history endpoint displays recorded good-quality measured
+`room_measurements` for `heating_activity` in `percent` and
+`heating_expenditure` in `SEK` per interval. Current integrations do not
+populate these fields. A future collector must record source device and
+observation time and must not convert a request, setpoint, demand percentage,
+or estimated cost into a measured physical activity or expenditure sample.
+
 Physical configuration remains owned by the house file and is applied through
 the reconciliation service; secrets remain backend-only.
 Manual commands require a durable, authenticated, audited controller-owned

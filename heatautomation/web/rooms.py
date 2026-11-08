@@ -55,6 +55,20 @@ def read_house(database_path):
         paths = conn.execute(select(models.heat_paths).where(models.heat_paths.c.removed_at.is_(None))).all()
         emitters = conn.execute(select(models.heat_path_emitters)).all()
         now = datetime.now(timezone.utc)
+        recent_snapshots = conn.execute(select(models.room_thermal_snapshots).where(
+            (models.room_thermal_snapshots.c.observed_at >= now - timedelta(minutes=15))
+            & (models.room_thermal_snapshots.c.observed_at <= now)).order_by(
+                models.room_thermal_snapshots.c.observed_at.desc()).limit(500)).all()
+        heat_by_room = {}
+        for snapshot in recent_snapshots:
+            data = json.loads(snapshot.data_json)
+            for room_id, sources in data.get("heat_inputs", {}).items():
+                if room_id not in heat_by_room and sources:
+                    heat_by_room[room_id] = {
+                        "observed_at": _iso(snapshot.observed_at),
+                        "sources": [{"id": source_id, "watts": item["watts"],
+                                     "classification": item["classification"]}
+                                    for source_id, item in sources.items()]}
         overrides = conn.execute(select(models.room_overrides).where(
             (models.room_overrides.c.starts_at <= now)
             & (models.room_overrides.c.expires_at > now)).order_by(
@@ -110,6 +124,7 @@ def read_house(database_path):
                 "comfort": state, "predicted_c": predicted.predicted_c if predicted else None,
                 "prediction_at": _iso(predicted.target_at) if predicted else None,
                 "heating_demand_kw": None, "active_sources": None, "heating_activity": None,
+                "heat_inputs": heat_by_room.get(room.id),
                 "devices": [{"id": d.id, "name": d.name, "adapter": d.adapter,
                              "external_id": d.external_id,
                              "connectivity": runtime[d.id].connectivity
@@ -148,6 +163,21 @@ def read_history(database_path, room_id):
         targets = conn.execute(select(models.room_target_events).where(
             models.room_target_events.c.room_id == room_id).order_by(
                 models.room_target_events.c.recorded_at.desc()).limit(500)).all()
+        observed_series = {}
+        for quantity, unit, field in (
+                ("heating_activity", "percent", "heating_activity_history"),
+                ("heating_expenditure", "SEK", "measured_expenditure")):
+            samples = conn.execute(select(models.room_measurements).where(
+                (models.room_measurements.c.room_id == room_id)
+                & (models.room_measurements.c.quantity == quantity)
+                & (models.room_measurements.c.unit == unit)
+                & (models.room_measurements.c.classification == "measured")
+                & (models.room_measurements.c.quality == "good")
+            ).order_by(models.room_measurements.c.observed_at.desc()).limit(500)).all()
+            observed_series[field] = [
+                {"at": _iso(row.observed_at), "value": row.value,
+                 "source_device_id": row.source_device_id}
+                for row in reversed(samples)]
         heat_inputs = []
         for snapshot in reversed(snapshots):
             data = json.loads(snapshot.data_json)
@@ -163,8 +193,9 @@ def read_history(database_path, room_id):
                              "actual_c": r.measured_c} for r in reversed(forecasts)],
             "target_history": [{"at": _iso(row.recorded_at), "value": row.target_c,
                                 "source": row.source} for row in reversed(targets)],
-            "heating_activity_history": None,
-            "source_contribution_history": heat_inputs, "measured_expenditure": None,
+            "heating_activity_history": observed_series["heating_activity_history"],
+            "source_contribution_history": heat_inputs,
+            "measured_expenditure": observed_series["measured_expenditure"],
         }
     return _load(database_path, query)
 

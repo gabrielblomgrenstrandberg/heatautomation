@@ -99,6 +99,11 @@ Automatic control and complete historical series are
 not yet managed by the GUI. Missing measurements and actual heat delivery remain unknown.
 The base-target history starts with web changes after migration; it is not an
 effective-target history and does not reconstruct past schedule or override values.
+Activity and expenditure charts read only good-quality, measured
+`room_measurements` with quantities `heating_activity` (unit `percent`) and
+`heating_expenditure` (unit `SEK`, interval expenditure), respectively.
+The existing integrations do not yet collect these series, so they remain
+empty until a verified data source records them.
 
 For frontend development, disable automatic web startup, run the web server
 separately with `python -m uvicorn heatautomation.web.app:create_app --factory
