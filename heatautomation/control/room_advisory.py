@@ -19,11 +19,12 @@ SCENARIOS = ("low", "nominal", "high")
 
 def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_heat_w,
                       outdoor_c, *, now, freshness_seconds=600,
-                      suspect_uncertainty_c, seconds=900):
+                      suspect_uncertainty_c, seconds=900, cost_per_delivered_kwh=None):
     """Predict a single step from measured temperatures and assumed heat inputs.
 
     All rooms need an explicit other-source mapping; an empty mapping declares
-    no other heat sources. Scenario results are conditional, not confidence bounds.
+    no other heat sources. A None circuit explicitly declares no radiator
+    circuit. Scenario results are conditional, not confidence bounds.
     """
     rooms, radiators = list(rooms), list(radiators)
     if not isinstance(now, datetime) or now.utcoffset() is None:
@@ -36,8 +37,8 @@ def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_he
         raise ValueError("Unique rooms are required")
     if not isinstance(outdoor_c, (int, float)) or isinstance(outdoor_c, bool) or not math.isfinite(outdoor_c):
         return {"available": False, "reasons": ["Outdoor temperature unavailable"]}
-    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or not math.isfinite(seconds) or seconds <= 0:
-        raise ValueError("Prediction duration must be positive and finite")
+    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or not math.isfinite(seconds) or not 0 < seconds <= 86400:
+        raise ValueError("Prediction duration must be positive and at most 24 hours")
     room_ids = {room.id for room in rooms}
     if any(r.room_id not in room_ids for r in radiators):
         raise ValueError("Radiator assigned to an unknown room")
@@ -52,7 +53,15 @@ def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_he
                 raise ValueError("Room conductances must be finite and symmetric")
     reasons = []
     usable = {}
-    radiator_result = estimate_delivery(circuit, radiators)
+    if circuit is None:
+        if radiators:
+            raise ValueError("A radiator circuit is required for radiators")
+        radiator_result = {
+            "classification": "estimated", "scenarios": {name: {} for name in SCENARIOS},
+            "generator_available": None, "generator_available_w": None,
+        }
+    else:
+        radiator_result = estimate_delivery(circuit, radiators)
     for room in rooms:
         reading = temperatures.get(room.id)
         if reading is None:
@@ -93,16 +102,28 @@ def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_he
         "capacity_j_per_k": room.capacity_j_per_k, "ua_w_per_k": room.heat_loss_w_per_k,
         "conductances_w_per_k": dict(room.conductances_w_per_k),
     } for room in rooms}
-    radiator_ids = {r.id for r in radiators} | {circuit.generator_id}
+    if set(other_heat_w) != room_ids:
+        raise ValueError("Other source inputs must refer only to configured rooms")
+    radiator_ids = {r.id for r in radiators}
+    if circuit is not None:
+        radiator_ids.add(circuit.generator_id)
+    source_ids = []
     for inputs in other_heat_w.values():
         if not isinstance(inputs, dict) or radiator_ids.intersection(inputs):
             raise ValueError("Other source inputs must be distinct from radiators")
+        source_ids.extend(inputs)
         for heat in inputs.values():
-            if (set(heat) != set(SCENARIOS)
+            if (not isinstance(heat, dict) or set(heat) != set(SCENARIOS)
                     or any(isinstance(v, bool) or not isinstance(v, (int, float))
                            or not math.isfinite(v) or v < 0 for v in heat.values())
                     or not heat["low"] <= heat["nominal"] <= heat["high"]):
                 raise ValueError("Other heat requires ordered finite nonnegative scenarios")
+    if len(source_ids) != len(set(source_ids)):
+        raise ValueError("A direct heat source may only be assigned to one room")
+    costs = cost_per_delivered_kwh or {}
+    if any(isinstance(v, bool) or not isinstance(v, (int, float))
+           or not math.isfinite(v) or v < 0 for v in costs.values()):
+        raise ValueError("Heat costs must be nonnegative and finite")
     predicted = {}
     for scenario in SCENARIOS:
         initial = {}
@@ -158,8 +179,10 @@ def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_he
         "created_at": now.isoformat(),
         "inputs": {
             "outdoor_c": outdoor_c, "duration_seconds": seconds,
-            "circuit": asdict(circuit), "radiators": [asdict(r) for r in radiators],
+            "circuit": asdict(circuit) if circuit is not None else None,
+            "radiators": [asdict(r) for r in radiators],
             "other_heat_w": other_heat_w, "suspect_uncertainty_c": suspect_uncertainty_c,
+            "cost_per_delivered_kwh": costs,
             "freshness_seconds": freshness_seconds,
             "room_parameters": {r.id: {
                 "capacity_j_per_k": r.capacity_j_per_k, "heat_loss_w_per_k": r.heat_loss_w_per_k,
@@ -171,8 +194,16 @@ def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_he
             "generator_available": radiator_result["generator_available"],
             "available_generator_w": radiator_result["generator_available_w"],
             "estimated_total_heating_demand_w": sum(r["estimated_heat_demand_w"] for r in result),
-            "estimated_heating_cost": None,
-            "warnings": ["Heating cost unavailable without a verified generator energy model."],
+            "estimated_heating_cost": (
+                {name: seconds / 3600000 * (
+                    sum(item[name] * costs[source] for inputs in other_heat_w.values()
+                        for source, item in inputs.items())
+                    + (sum(radiator_result["scenarios"][name].values())
+                       * costs[circuit.generator_id] if circuit is not None else 0))
+                 for name in SCENARIOS}
+                if all(source in costs for source in source_ids
+                       + ([circuit.generator_id] if circuit is not None else [])) else None),
+            "warnings": ["Any heating costs are scenario estimates, not measured consumption."],
         },
         "assumptions": "Fixed heat and weather for one step; scenarios are not confidence bounds; no commands.",
     }

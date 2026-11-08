@@ -216,6 +216,24 @@ def read_plan(database_path):
     return _load(database_path, query)
 
 
+def read_advisory(database_path):
+    def query(conn):
+        plan = conn.execute(select(models.optimizer_plans).where(
+            models.optimizer_plans.c.mode == "advisory").order_by(
+            models.optimizer_plans.c.created_at.desc(),
+            models.optimizer_plans.c.id.desc()).limit(1)).first()
+        if plan is None:
+            return None
+        result = json.loads(plan.details_json)
+        if result.get("available"):
+            result["rooms"] = [json.loads(row.data_json) for row in conn.execute(
+                select(models.optimizer_plan_intervals).where(
+                    models.optimizer_plan_intervals.c.plan_id == plan.id)
+                .order_by(models.optimizer_plan_intervals.c.room_id))]
+        return result
+    return _load(database_path, query)
+
+
 def read_schedules(database_path, room_id):
     def query(conn):
         exists = conn.execute(select(models.rooms.c.id).where(

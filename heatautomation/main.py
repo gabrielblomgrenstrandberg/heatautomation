@@ -470,6 +470,57 @@ def grid_monitor_loop():
             next_poll = time.monotonic() + GRID_POLL_INTERVAL_SECONDS
 
 
+def room_advisory_loop():
+    """Run optional multi-room observations independently of legacy thermal learning."""
+    from pathlib import Path
+    from .control.room_advisory_monitor import run_cycle
+    from .house.config import config_hash, load_house_config
+    from .integrations.tado import TadoService, TokenFile
+    from .learning.database import ThermalDatabase
+    from .thermal.advisory_inputs import load_equipment_inputs
+
+    database = None
+    service = None
+    service_hash = None
+    while True:
+        started = time.monotonic()
+        try:
+            if database is None:
+                database = ThermalDatabase(config.THERMAL_DATABASE_PATH)
+            house_path = os.environ.get("HEATAUTOMATION_HOUSE_CONFIG", "config/house.json")
+            house = load_house_config(house_path)
+            digest = config_hash(house)
+            if service is not None and (digest != service_hash or not config.TADO_ENABLED):
+                service.close()
+                service = None
+            if service is None and config.TADO_ENABLED:
+                service = TadoService(
+                    house, TokenFile(Path.home() / ".heatautomation" / "tado-token.json"))
+                service_hash = digest
+            forecast = weather.get_forecast() if config.WEATHER_ENABLED else None
+            outdoor = forecast[0].get("temperature_c") if forecast else None
+            equipment_path = config._settings.get(
+                "room_advisory", "equipment_path", fallback="config/room_advisory.json")
+            try:
+                equipment = load_equipment_inputs(equipment_path, datetime.now().astimezone())
+            except OSError as error:
+                equipment = None
+                logging.warning("Room advisory equipment inputs unavailable: %s", error)
+            except ValueError:
+                equipment = None
+                logging.warning("Room advisory equipment inputs are invalid, stale or future-dated.")
+            result = run_cycle(
+                database.engine, house, service, outdoor, equipment=equipment,
+                suspect_uncertainty_c=config._number(
+                    "room_advisory", "suspect_uncertainty_c", positive=True),
+            )
+            if not result["available"]:
+                logging.warning("Room advisory unavailable: %s", "; ".join(result["reasons"]))
+        except Exception:
+            logging.exception("Room advisory collection failed; will retry on the next poll.")
+        time.sleep(max(1, 300 - (time.monotonic() - started)))
+
+
 def thermal_monitor_loop():
     # Imports are deferred so a monitoring dependency cannot prevent heat control.
     try:
@@ -546,6 +597,12 @@ def main_loop():
         threading.Thread(
             target=thermal_monitor_loop,
             name="thermal-monitor",
+            daemon=True
+        ).start()
+    if config._settings.getboolean("room_advisory", "enabled", fallback=False):
+        threading.Thread(
+            target=room_advisory_loop,
+            name="room-advisory-monitor",
             daemon=True
         ).start()
     if FAN_ASSIST_ENABLED and config.SENSIBO_ENABLED and config.KMP_ENABLED:

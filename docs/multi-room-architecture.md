@@ -2,10 +2,9 @@
 
 ## Read-only measurement and advisory foundation
 
-The codebase now contains a separate, **not automatically scheduled** advisory
-path. It does not replace the legacy MPC or call device commands. The physical
-configuration, runtime collection and model calibration described below are
-not yet wired end-to-end to this path.
+The codebase contains a separate, opt-in read-only advisory path. It does not
+replace the legacy MPC or call device commands. Physical inputs still require
+independently verified equipment observations and model calibration.
 
 `thermal.measurements.Measurement` records the room, optional physical device,
 integration, connection method, observation/receipt times, quality and
@@ -24,7 +23,8 @@ delivered heat**. Since the adapter cannot identify the physical sensor,
 the device ID is unknown and the Tado home/zone is stored as the source
 reference. A target with no provider timestamp is returned as unknown and is
 not stored as a current measurement. Errors propagate and do not erase prior
-measurements. The collector is a callable, not a running background worker.
+measurements. The optional worker polls configured mapped Tado rooms every
+five minutes and checks that the current house configuration is reconciled.
 
 `thermal.radiators.estimate_delivery` uses explicitly supplied radiator ratings,
 water temperatures, demand, generator availability, capacity, exponent and
@@ -49,15 +49,41 @@ empty mappings. The result is a one-step conditional prediction, not a
 thermostat command or an optimized achievable allocation. Cost remains
 unknown without a verified generator energy model.
 
-The new advisory function currently takes inputs from its caller rather than
-discovering all physical paths from the database. `save_advisory` optionally
-persists available outputs and assumptions in the existing optimizer tables,
-under a separate `advisory` mode. Callers must ensure all sources are
-included exactly once. Automatic multi-room polling, equipment configuration
-and measured SPRSUN output, forecast scenarios, validated parameter learning
-from these observations, and a user-facing advisory workflow remain future
-work. The existing room optimizer still uses idealized heat allocation and
-must not be treated as a direct Tado command.
+The worker resolves rooms, radiator identities and required direct heat paths
+from the reconciled house, then reads optional independently supplied equipment
+inputs. `save_advisory` persists available outputs and assumptions in the
+existing optimizer tables under a separate `advisory` mode; unavailable results
+are recorded too. Authenticated `GET /api/room-advisory` returns the latest
+result. The worker does not infer a live SPRSUN output from its name or Tado
+demand, or infer direct heat from a device being enabled.
+
+To opt in, migrate the database, create and reconcile a real house
+configuration, authorize Tado, configure mapped rooms and targets, and set
+`[room_advisory] enabled = true` in `heatautomation.conf`. Restart the
+controller and web server. The worker reads
+`config/room_advisory.json` (or `[room_advisory] equipment_path`), an
+independently maintained JSON snapshot in the format of
+`config/room_advisory.example.json`. The example's timestamp and physical
+values are deliberately fictitious. A snapshot expires after ten minutes and
+must carry a timezone-aware observation time, `measured` or `estimated`
+classification and provenance. Supply **every configured direct heat source**
+and one shared radiator generator with independently supported state, capacity,
+water temperatures, radiator ratings and delivery-factor assumptions. Cost
+rates are optional costs per kWh *delivered heat*, in the same currency;
+missing rates produce an unknown cost. The outdoor value is the first weather
+forecast entry, not a measured outdoor temperature. Missing inputs or any
+unknown room temperature prevent a house prediction.
+
+The worker currently supports one water circuit and mapped Tado room sensors;
+it has no direct SPRSUN telemetry or automatic source-delivery estimator.
+Its equipment snapshot must be supplied by a trusted external measurement or
+estimation process, and individual inputs share one timestamp and provenance.
+It does not automatically estimate confidence from water conditions, vary
+weather over the horizon, calibrate radiator delivery, feed its estimates to
+the learner or produce a full multi-interval plan. The existing room optimizer
+still uses idealized heat allocation and must not be treated as a direct Tado
+command. All outputs are conditional one-step scenarios, not validated
+comfort guarantees.
 
 To upgrade an existing SQLite database, run
 `python -m heatautomation.house.migrate --database <path>`; it backs up the

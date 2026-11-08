@@ -63,6 +63,13 @@ class WebTests(unittest.TestCase):
         self.assertFalse(data["enabled"]["sensibo"])
         self.assertFalse(data["automatic_switching_available"])
 
+    def test_room_advisory_requires_authentication(self):
+        self.assertEqual(self.client.get("/api/room-advisory").status_code, 401)
+        self.login()
+        response = self.client.get("/api/room-advisory")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json())
+
     def test_tado_status_does_not_change_legacy_switching_availability(self):
         self.login()
         with patch.object(config, "SENSIBO_ENABLED", True), \

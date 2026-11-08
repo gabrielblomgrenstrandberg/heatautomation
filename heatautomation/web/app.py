@@ -20,7 +20,7 @@ from .. import config
 from ..house.config import HouseConfig
 from .house_config import ConfigurationConflict, apply_configuration, read_configuration, save_configuration
 from .status import StatusUnavailable, read_status
-from .rooms import read_history, read_house, read_plan, read_schedules, set_override, set_room_settings, set_schedules
+from .rooms import read_advisory, read_history, read_house, read_plan, read_schedules, set_override, set_room_settings, set_schedules
 from .discovery import read_discovery, request_scan
 
 
@@ -274,6 +274,14 @@ def create_app(password=None, database_path=None, origin=None, secure_cookie=Non
         require_session(request)
         try:
             return await run_in_threadpool(read_plan, database_path)
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/api/room-advisory")
+    async def room_advisory(request: Request):
+        require_session(request)
+        try:
+            return await run_in_threadpool(read_advisory, database_path)
         except StatusUnavailable as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 

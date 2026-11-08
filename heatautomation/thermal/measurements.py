@@ -46,6 +46,8 @@ class Measurement:
             raise ValueError("Measurement times must include timezones")
         if not math.isfinite(freshness_seconds) or freshness_seconds <= 0:
             raise ValueError("Freshness must be positive and finite")
+        if self.received_at > now:
+            return replace(self, quality=Quality.INVALID)
         if self.value is None or self.observed_at is None:
             return replace(self, quality=Quality.UNKNOWN)
         if isinstance(self.value, bool) or not isinstance(self.value, (int, float)) or not math.isfinite(self.value):
@@ -94,7 +96,8 @@ def tado_measurements(status, *, now, freshness_seconds=600):
     demand = Measurement(
         None, None, room, "heating_demand", status.get("heating_demand_percent"), "%",
         _time(status.get("heating_demand_observed_at")), received, "tado", "CLOUD",
-        Quality.SUSPECT, Classification.MEASURED, source_ref,
+        Quality.STALE if status.get("connection") == "OFFLINE" else Quality.SUSPECT,
+        Classification.MEASURED, source_ref,
     )
     target = Measurement(
         None, None, room, "target_temperature", status.get("requested_temperature_c"), "C",
@@ -142,9 +145,14 @@ class MeasurementStore:
 
     def latest(self, room_id, quantity, *, now, freshness_seconds=600,
                source_integration=None, source_ref=None):
+        if now.utcoffset() is None:
+            raise ValueError("Measurement query time must include a timezone")
+        now = now.astimezone(timezone.utc)
         query = select(models.room_measurements).where(
             (models.room_measurements.c.room_id == room_id)
             & (models.room_measurements.c.quantity == quantity)
+            & (models.room_measurements.c.observed_at <= now)
+            & (models.room_measurements.c.received_at <= now)
             & models.room_measurements.c.quality.in_(("good", "suspect")))
         if source_integration is not None:
             query = query.where(models.room_measurements.c.source_integration == source_integration)
@@ -165,11 +173,13 @@ class MeasurementStore:
         ).at(now, freshness_seconds)
 
 
-def collect_tado_room(service, store, room_id, *, now, freshness_seconds=600):
+def collect_tado_room(service, store, room_id, *, now=None, freshness_seconds=600):
     """Fetch one mapped zone and persist only current, valid observations."""
     status = service.get_room_status(room_id)
     if str(status.get("room_id")) != str(room_id):
         raise ValueError("Tado returned a different room")
+    if now is None:
+        now = datetime.now(timezone.utc)
     values = tado_measurements(status, now=now, freshness_seconds=freshness_seconds)
     return tuple(store.save(value) if value.quality in (Quality.GOOD, Quality.SUSPECT)
                  else value for value in values)

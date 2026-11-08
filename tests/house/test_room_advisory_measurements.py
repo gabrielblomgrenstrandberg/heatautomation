@@ -1,16 +1,22 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from sqlalchemy import create_engine, select
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import create_engine, select, update
+from sqlalchemy.engine import URL
 
 from heatautomation.control.room_advisory import predict_scenarios, save_advisory
+from heatautomation.control.room_advisory_monitor import run_cycle
 from heatautomation.control.room_mpc import Room
 from heatautomation.house import models
 from heatautomation.house.config import load_house_config
+from heatautomation.house.config import HouseConfig
 from heatautomation.house.migrate import migrate_database
 from heatautomation.house.reconcile import reconcile_house
 from heatautomation.integrations.tado import TadoService
@@ -18,6 +24,8 @@ from heatautomation.thermal.measurements import (
     Classification, Measurement, MeasurementStore, Quality, collect_tado_room,
 )
 from heatautomation.thermal.radiators import Circuit, Radiator, estimate_delivery
+from heatautomation.thermal.advisory_inputs import EquipmentInputs, load_equipment_inputs
+from heatautomation.web.rooms import read_advisory
 from tests.integrations.test_tado import Response, Session, Store, tokens
 
 
@@ -151,6 +159,145 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(json.loads(plan.details_json)["model_version"], "room-advisory-1")
         self.assertEqual(json.loads(interval.data_json)["temperature_measurement_id"], temp.id)
 
+    def test_historical_read_excludes_observations_not_yet_received(self):
+        original = self.store.save(reading(ROOM))
+        later = replace(reading(ROOM, value=21), observed_at=NOW + timedelta(minutes=5),
+                        received_at=NOW + timedelta(minutes=10))
+        self.store.save(later)
+        replayed = self.store.latest(ROOM, "temperature", now=NOW + timedelta(minutes=7))
+        self.assertEqual(replayed.id, original.id)
+        self.assertEqual(later.at(NOW + timedelta(minutes=7), 600).quality, Quality.INVALID)
+        live = self.store.latest(ROOM, "temperature", now=NOW + timedelta(minutes=11))
+        self.assertEqual(live.value, 21)
+
+    def test_upgrade_preserves_preexisting_room_measurements(self):
+        path = Path(self.temp.name) / "old.sqlite3"
+        alembic = Config(str(ROOT / "alembic.ini"))
+        alembic.set_main_option("script_location", str(ROOT / "migrations"))
+        alembic.set_main_option("sqlalchemy.url", URL.create("sqlite", database=str(path))
+                                  .render_as_string(hide_password=False).replace("%", "%%"))
+        command.upgrade(alembic, "0007")
+        engine = create_engine("sqlite:///" + str(path))
+        try:
+            with engine.begin() as conn:
+                conn.exec_driver_sql(
+                    "INSERT INTO room_measurements "
+                    "(room_id, quantity, value, unit, observed_at, received_at, quality, classification) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (ROOM, "temperature", 19.0, "C", NOW.isoformat(), NOW.isoformat(),
+                     "suspect", "measured"))
+            command.upgrade(alembic, "head")
+            with engine.connect() as conn:
+                old = conn.execute(select(models.room_measurements)).one()
+            self.assertEqual(old.value, 19.0)
+            self.assertIsNone(old.source_integration)
+            self.assertIsNone(old.source_ref)
+        finally:
+            engine.dispose()
+
+    def test_monitor_collects_tado_and_persists_unavailable_without_commands(self):
+        data = self.house_data()
+        data["tado_rooms"][0].update(home_id=1, zone_id=2)
+        house = HouseConfig.model_validate(data)
+        reconcile_house(self.engine, house)
+        now = datetime.now(timezone.utc)
+        status = {
+            "room_id": ROOM, "home_id": 1, "zone_id": 2,
+            "temperature_reading": {"value": 20, "timestamp": now.isoformat(),
+                                    "received_at": now.isoformat(), "quality": "suspect"},
+            "requested_temperature_c": 21, "heating_demand_percent": 60,
+            "heating_demand_observed_at": now.isoformat(),
+        }
+        service = Mock()
+        service.get_room_status.return_value = status
+        result = run_cycle(self.engine, house, service, 5, suspect_uncertainty_c=0.5)
+        self.assertFalse(result["available"])
+        self.assertTrue(any("generator" in reason for reason in result["reasons"]))
+        self.assertEqual(self.store.latest(ROOM, "temperature", now=datetime.now(timezone.utc),
+                                           source_ref="tado:1:2").value, 20)
+        self.assertEqual(read_advisory(str(Path(self.temp.name) / "thermal.sqlite3"))["mode"],
+                         "advisory")
+        service.get_room_status.assert_called_once_with(ROOM)
+        service.set_room_temperature.assert_not_called()
+        service.set_heating_enabled.assert_not_called()
+
+    def test_monitor_produces_configured_tado_circuit_scenario(self):
+        data = self.house_data()
+        generator = "0eb76129-21c5-4e28-a5bd-264c9382c61c"
+        thermostat = "89389cb1-1271-490b-9f91-de2cef5b7603"
+        emitter = "6f24ec42-7652-4d6c-8941-8f8d97989332"
+        data["rooms"] = [r for r in data["rooms"] if r["id"] == ROOM]
+        data["floors"] = [f for f in data["floors"] if f["id"] == data["rooms"][0]["floor_id"]]
+        data["devices"] = [d for d in data["devices"] if d["id"] in (generator, thermostat, emitter)]
+        next(d for d in data["devices"] if d["id"] == emitter)["rated_w_at_dt50"] = 2000
+        data["heat_paths"] = [p for p in data["heat_paths"] if p["id"] == "radiator-circuit"]
+        data["heat_paths"][0]["emitter_ids"] = [emitter]
+        data["room_priors"] = [p for p in data["room_priors"] if p["room_id"] == ROOM]
+        data["thermal_links"] = []
+        data["tado_rooms"] = [{"room_id": ROOM, "home_id": 1, "zone_id": 2}]
+        house = HouseConfig.model_validate(data)
+        path = Path(self.temp.name) / "single.sqlite3"
+        migrate_database(path, backup=False)
+        engine = create_engine("sqlite:///" + str(path))
+        self.addCleanup(engine.dispose)
+        reconcile_house(engine, house)
+        with engine.begin() as conn:
+            conn.execute(update(models.room_settings).where(
+                models.room_settings.c.room_id == ROOM).values(target_c=21))
+        now = datetime.now(timezone.utc)
+        status = {
+            "room_id": ROOM, "home_id": 1, "zone_id": 2,
+            "temperature_reading": {"value": 20, "timestamp": now.isoformat(),
+                                    "received_at": now.isoformat(), "quality": "suspect"},
+            "requested_temperature_c": 21, "heating_demand_percent": 60,
+            "heating_demand_observed_at": now.isoformat(),
+        }
+        service = Mock()
+        service.get_room_status.return_value = status
+        circuit = Circuit(True, 1000, 70, 60, 1.3, (0.25, 0.5, 1.0), generator)
+        result = run_cycle(engine, house, service, 5, circuit=circuit,
+                           other_heat_w={ROOM: {}}, suspect_uncertainty_c=0.5)
+        self.assertTrue(result["available"])
+        self.assertEqual(result["rooms"][0]["current_temperature_c"], 20)
+        self.assertEqual(result["rooms"][0]["tado_demand_percent"][emitter], 60)
+        self.assertLessEqual(result["rooms"][0]["estimated_radiator_w"]["high"], 1000)
+        self.assertEqual(read_advisory(path)["rooms"][0]["room_id"], ROOM)
+        service.set_room_temperature.assert_not_called()
+
+    def test_equipment_inputs_require_freshness_and_calculate_conditional_cost(self):
+        data = {
+            "observed_at": NOW.isoformat(), "classification": "estimated",
+            "provenance": "test", "circuit": {
+                "generator_id": "generator", "generator_available": True, "available_w": 1000,
+                "supply_c": 70, "return_c": 60, "exponent": 1.3,
+                "delivery_factors": [0.25, 0.5, 1.0],
+            },
+            "direct_heat_w": {ROOM: {"kmp": {"low": 0, "nominal": 500, "high": 1000}}},
+            "cost_per_delivered_kwh": {"generator": 2, "kmp": 1},
+        }
+        inputs = EquipmentInputs.model_validate(data)
+        path = Path(self.temp.name) / "equipment.json"
+        import json
+        path.write_text(json.dumps(data), encoding="utf-8")
+        loaded = load_equipment_inputs(path, NOW)
+        self.assertEqual(loaded, inputs)
+        with self.assertRaisesRegex(ValueError, "stale"):
+            load_equipment_inputs(path, NOW + timedelta(minutes=11))
+        radiator = Radiator("radiator-1", ROOM, 2000, 60, 20)
+        result = predict_scenarios(
+            [room(ROOM)], {ROOM: reading(ROOM)}, demands([radiator]), loaded.circuit.circuit(),
+            [radiator], {ROOM: {"kmp": loaded.direct_heat_w[ROOM]["kmp"].model_dump()}}, 5,
+            now=NOW, suspect_uncertainty_c=0.5,
+            cost_per_delivered_kwh=loaded.cost_per_delivered_kwh,
+        )
+        nominal_heat = result["rooms"][0]["estimated_radiator_w"]["nominal"]
+        expected = 0.25 * (nominal_heat * 2 + 500) / 1000
+        self.assertAlmostEqual(result["house"]["estimated_heating_cost"]["nominal"], expected)
+
+    @staticmethod
+    def house_data():
+        return load_house_config(ROOT / "config" / "house.example.json").model_dump(mode="json")
+
 
 class AdvisoryTests(unittest.TestCase):
     def setUp(self):
@@ -195,7 +342,7 @@ class AdvisoryTests(unittest.TestCase):
     def test_missing_temperature_source_and_weather_block_predictions(self):
         rooms = [room("living"), room("storage")]
         rads = [self.rads[0]]
-        with patch("heatautomation.thermal.model.simulate_step") as command:
+        with patch("heatautomation.control.room_advisory.simulate_step") as command:
             result = predict_scenarios(rooms, {"living": reading("living")}, demands(rads), self.circuit, rads,
                                        {"living": {}, "storage": {}}, 5, now=NOW,
                                        suspect_uncertainty_c=0.5)
@@ -209,6 +356,24 @@ class AdvisoryTests(unittest.TestCase):
                                    {"living": {}}, 5, now=NOW + timedelta(minutes=11),
                                    suspect_uncertainty_c=0.5)
         self.assertFalse(result["available"])
+
+    def test_independent_sensibo_and_mill_without_radiator_and_no_double_count(self):
+        rooms = [room("living"), room("storage")]
+        temperatures = {"living": reading("living", quality=Quality.GOOD),
+                        "storage": reading("storage", quality=Quality.GOOD)}
+        sources = {
+            "living": {"sensibo": {"low": 500, "nominal": 1000, "high": 1500}},
+            "storage": {"mill_heater": {"low": 0, "nominal": 500, "high": 1000}},
+        }
+        result = predict_scenarios(rooms, temperatures, {}, None, [], sources, 5,
+                                   now=NOW, suspect_uncertainty_c=0.5)
+        self.assertTrue(result["available"])
+        self.assertEqual(result["rooms"][0]["estimated_other_heat_w"]["nominal"], 1000)
+        self.assertEqual(result["rooms"][1]["estimated_other_heat_w"]["nominal"], 500)
+        sources["storage"]["sensibo"] = sources["living"]["sensibo"]
+        with self.assertRaisesRegex(ValueError, "only be assigned to one room"):
+            predict_scenarios(rooms, temperatures, {}, None, [], sources, 5,
+                              now=NOW, suspect_uncertainty_c=0.5)
 
 
 if __name__ == "__main__":
