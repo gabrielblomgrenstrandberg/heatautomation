@@ -11,6 +11,7 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+frontend/node_modules/
 downloads/
 eggs/
 .eggs/
@@ -58,6 +59,10 @@ cover/
 # Django stuff:
 *.log
 heating_data_log.csv
+thermal_history.sqlite3
+thermal_history.sqlite3-journal
+thermal_history.sqlite3-wal
+thermal_history.sqlite3-shm
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
