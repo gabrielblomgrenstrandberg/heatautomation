@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Activity, ArrowUpRight, CircleAlert, Flame, House, LogOut, Moon, Sun, Thermometer, Wind, Zap } from "lucide-react";
 import "./style.css";
+import Rooms, { type HouseData } from "./Rooms";
 
 type Device = { on: boolean | null; mode: string | null; capacity_kw: number | null };
 type Status = {
@@ -18,7 +19,8 @@ type Status = {
   estimated_demand_kw?: number | null;
   estimated_pump_cost_sek_kwh?: number | null;
 };
-type LiveMessage = { type: "status"; data: Status } | { type: "error"; message: string };
+type LiveMessage = { type: "status"; data: Status } | { type: "error"; message: string }
+  | { type: "house"; data: HouseData } | { type: "house_error"; message: string };
 
 function value(number: number | null | undefined, unit: string, digits = 1) {
   return number == null ? "—" : `${number.toFixed(digits)} ${unit}`;
@@ -30,6 +32,8 @@ function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(false);
+  const [house, setHouse] = useState<HouseData | null>(null);
+  const [houseError, setHouseError] = useState("");
   const [dark, setDark] = useState(() => localStorage.getItem("theme") !== "light");
 
   useEffect(() => {
@@ -56,6 +60,8 @@ function App() {
       socket.onmessage = event => {
         const message = JSON.parse(event.data) as LiveMessage;
         if (message.type === "status") { setStatus(message.data); setError(""); }
+        else if (message.type === "house") { setHouse(message.data); setHouseError(""); }
+        else if (message.type === "house_error") { setHouse(null); setHouseError(message.message); }
         else { setStatus(null); setError(message.message); }
       };
       socket.onclose = event => {
@@ -144,7 +150,8 @@ function App() {
             </div><p className="mt-4 text-xs leading-5 text-stone-500 dark:text-stone-400">Estimates use configured curves when cost control is enabled. They are not measured heat or actual operating costs.</p>
           </section>
         </div>
-        <footer className="mt-7 flex flex-wrap justify-between gap-2 text-xs text-stone-500 dark:text-stone-400"><span>Read-only monitoring · Control runs independently</span><span>Last observation: {status?.observed_at ? new Date(status.observed_at).toLocaleString() : "Unavailable"}</span></footer>
+        <Rooms house={house} error={houseError}/>
+        <footer className="mt-7 flex flex-wrap justify-between gap-2 text-xs text-stone-500 dark:text-stone-400"><span>Room settings do not dispatch commands · Control runs independently</span><span>Last observation: {status?.observed_at ? new Date(status.observed_at).toLocaleString() : "Unavailable"}</span></footer>
       </main>}
   </div>;
 }

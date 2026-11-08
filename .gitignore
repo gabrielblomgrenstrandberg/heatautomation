@@ -69,6 +69,7 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 thermal_history.sqlite3*
+config/house.json
 thermal_model.joblib*
 
 # Flask stuff:

@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from heatautomation.learning.database import ThermalDatabase
+from heatautomation.house.migrate import migrate_database
 from heatautomation.web.app import create_app
 from heatautomation.web.status import StatusUnavailable, read_status
 
@@ -20,6 +21,7 @@ class WebTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name) / "thermal.sqlite3"
+        migrate_database(self.path, backup=False)
         self.db = ThermalDatabase(self.path)
         self.addCleanup(self.db.engine.dispose)
         self.client = TestClient(create_app(password=PASSWORD, database_path=self.path, origin=ORIGIN))

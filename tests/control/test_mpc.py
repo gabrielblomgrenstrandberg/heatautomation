@@ -11,6 +11,7 @@ from sqlalchemy import select
 from heatautomation.control.mpc import Interval, PlanningUnavailable, Settings, _Problem, optimize
 from heatautomation.control import mpc_monitor, mpc_simulation
 from heatautomation.learning.database import ThermalDatabase, plans, plan_intervals, plan_evaluations
+from heatautomation.house.migrate import migrate_database
 from heatautomation.integrations import kmp, sensibo, tibber
 
 
@@ -123,7 +124,9 @@ class SchedulerTests(unittest.TestCase):
         plan = optimize(intervals(), [20] * 7, {"heatpump": True, "pelletstove": False},
                         predictor(), self.settings)
         with tempfile.TemporaryDirectory() as directory:
-            db = ThermalDatabase(Path(directory) / "history.sqlite3")
+            path = Path(directory) / "history.sqlite3"
+            migrate_database(path, backup=False)
+            db = ThermalDatabase(path)
             try:
                 now = datetime.now(timezone.utc)
                 first, changes = db.save_plan(now, now.isoformat(), 20, {}, plan)
@@ -228,7 +231,9 @@ class SchedulerTests(unittest.TestCase):
         forecasts = [{"time": "2026-01-01T{:02d}:00".format(i), "temperature_c": 0}
                      for i in range(1, 7)]
         with tempfile.TemporaryDirectory() as directory:
-            db = ThermalDatabase(Path(directory) / "history.sqlite3")
+            path = Path(directory) / "history.sqlite3"
+            migrate_database(path, backup=False)
+            db = ThermalDatabase(path)
             try:
                 for i in range(7):
                     db.save(now - timedelta(minutes=30 - i * 5), {"indoor_c": 20}, {

@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (Boolean, Column, Float, ForeignKey, Integer, MetaData,
-                        String, Table, Text, create_engine, select)
+                        String, Table, Text, create_engine, inspect, select)
 
 
 metadata = MetaData()
@@ -59,7 +59,15 @@ plan_evaluations = Table(
 class ThermalDatabase:
     def __init__(self, path):
         self.engine = create_engine("sqlite:///" + str(path))
-        metadata.create_all(self.engine)
+        existing_tables = set(inspect(self.engine).get_table_names())
+        missing_tables = set(metadata.tables) - existing_tables
+        if missing_tables:
+            self.engine.dispose()
+            raise RuntimeError(
+                "Thermal database is missing legacy tables %s. Run "
+                "'python -m heatautomation.house.migrate --database <path>' "
+                "before starting the application." % ", ".join(sorted(missing_tables))
+            )
 
     def save(self, timestamp, sensor_values, source_values):
         if timestamp.tzinfo is None or timestamp.utcoffset() is None:

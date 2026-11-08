@@ -1,0 +1,328 @@
+{
+  "schema_version": 1,
+  "house": {
+    "id": "308bbf0b-a260-4155-b221-1bcea6a94540",
+    "name": "Home"
+  },
+  "floors": [
+    {"id": "9ab0e7d5-fec6-4f77-a586-1a3873221b3d", "name": "Floor 1", "level": 1},
+    {"id": "2ceef80b-c01d-4f89-a27b-14094c764871", "name": "Floor 0", "level": 0}
+  ],
+  "rooms": [
+    {"id": "6f1282eb-23f7-4c3e-8905-e056c1a35220", "floor_id": "9ab0e7d5-fec6-4f77-a586-1a3873221b3d", "name": "Living room"},
+    {"id": "be1dd3a2-ed38-473b-8c60-8d90a7b2aea4", "floor_id": "9ab0e7d5-fec6-4f77-a586-1a3873221b3d", "name": "Kitchen"},
+    {"id": "69da31be-ece9-49ef-86e7-bfd7b6bf32d1", "floor_id": "9ab0e7d5-fec6-4f77-a586-1a3873221b3d", "name": "Nursery"},
+    {"id": "dc07b943-d9a0-4d85-b96a-c7a479e8ae89", "floor_id": "9ab0e7d5-fec6-4f77-a586-1a3873221b3d", "name": "Bathroom"},
+    {"id": "7b290880-803b-422a-aea0-9c333237a32b", "floor_id": "9ab0e7d5-fec6-4f77-a586-1a3873221b3d", "name": "Office"},
+    {"id": "3b460f84-e2e0-409e-a618-456c357ddfcb", "floor_id": "2ceef80b-c01d-4f89-a27b-14094c764871", "name": "Hall"},
+    {"id": "4f59bfca-605c-4b05-95a5-e99aff55c2f6", "floor_id": "2ceef80b-c01d-4f89-a27b-14094c764871", "name": "Toilet"},
+    {"id": "d291841f-9dca-4aa5-b401-6c56f5468b64", "floor_id": "2ceef80b-c01d-4f89-a27b-14094c764871", "name": "Wardrobe"},
+    {"id": "1c282c24-b8bf-47fb-8c3a-6f2271658dac", "floor_id": "2ceef80b-c01d-4f89-a27b-14094c764871", "name": "Bedroom"},
+    {"id": "4c9b2091-4d8f-4f9e-bce1-776aea539ac0", "floor_id": "2ceef80b-c01d-4f89-a27b-14094c764871", "name": "Washroom"},
+    {"id": "d981f1f6-bf20-40e4-8526-c008ad0f30b2", "floor_id": "2ceef80b-c01d-4f89-a27b-14094c764871", "name": "Storage"}
+  ],
+  "tado_rooms": [
+    {"room_id": "6f1282eb-23f7-4c3e-8905-e056c1a35220", "home_id": null, "zone_id": null},
+    {"room_id": "be1dd3a2-ed38-473b-8c60-8d90a7b2aea4", "home_id": null, "zone_id": null},
+    {"room_id": "69da31be-ece9-49ef-86e7-bfd7b6bf32d1", "home_id": null, "zone_id": null},
+    {"room_id": "dc07b943-d9a0-4d85-b96a-c7a479e8ae89", "home_id": null, "zone_id": null},
+    {"room_id": "7b290880-803b-422a-aea0-9c333237a32b", "home_id": null, "zone_id": null},
+    {"room_id": "3b460f84-e2e0-409e-a618-456c357ddfcb", "home_id": null, "zone_id": null},
+    {"room_id": "4f59bfca-605c-4b05-95a5-e99aff55c2f6", "home_id": null, "zone_id": null},
+    {"room_id": "d291841f-9dca-4aa5-b401-6c56f5468b64", "home_id": null, "zone_id": null},
+    {"room_id": "1c282c24-b8bf-47fb-8c3a-6f2271658dac", "home_id": null, "zone_id": null},
+    {"room_id": "4c9b2091-4d8f-4f9e-bce1-776aea539ac0", "home_id": null, "zone_id": null}
+  ],
+  "devices": [
+    {
+      "id": "0eb76129-21c5-4e28-a5bd-264c9382c61c",
+      "kind": "heat_generator",
+      "name": "SPRSUN CGK/C-12(LIO) heat pump",
+      "room_id": null,
+      "adapter": "sprsun",
+      "external_id": null,
+      "capabilities": [],
+      "rated_kw": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "23420987-e2ac-4897-9333-4d577484d084",
+      "kind": "heat_generator",
+      "name": "KMP Lilla Frö pellet stove",
+      "room_id": "6f1282eb-23f7-4c3e-8905-e056c1a35220",
+      "adapter": "kmp",
+      "external_id": null,
+      "capabilities": ["read_status", "set_power"],
+      "rated_kw": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "09963c36-c69b-4472-be21-4d6095292759",
+      "kind": "heat_generator",
+      "name": "Electric heater (storage)",
+      "room_id": "d981f1f6-bf20-40e4-8526-c008ad0f30b2",
+      "adapter": "manual",
+      "external_id": null,
+      "capabilities": [],
+      "rated_kw": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "c1565fc6-f3e9-40db-a83d-a4dc4cd195c1",
+      "kind": "actuator_sensor",
+      "name": "Mill smart outlet (storage)",
+      "room_id": "d981f1f6-bf20-40e4-8526-c008ad0f30b2",
+      "adapter": "mill",
+      "external_id": null,
+      "capabilities": ["read_temperature", "read_status", "set_power"],
+      "provenance": "unverified_api"
+    },
+    {
+      "id": "89389cb1-1271-490b-9f91-de2cef5b7603",
+      "kind": "thermostat",
+      "name": "Tado thermostat (living room)",
+      "room_id": "6f1282eb-23f7-4c3e-8905-e056c1a35220",
+      "adapter": "tado",
+      "external_id": null,
+      "capabilities": ["read_temperature", "read_setpoint", "write_setpoint"],
+      "provenance": "unverified_api"
+    },
+    {
+      "id": "ebcc8f13-c723-45ef-b2af-5b8a4e89ce02",
+      "kind": "thermostat",
+      "name": "Tado thermostat (kitchen)",
+      "room_id": "be1dd3a2-ed38-473b-8c60-8d90a7b2aea4",
+      "adapter": "tado",
+      "external_id": null,
+      "capabilities": ["read_temperature", "read_setpoint", "write_setpoint"],
+      "provenance": "unverified_api"
+    },
+    {
+      "id": "abb80d22-02a9-4987-a5ee-2d9a58920083",
+      "kind": "thermostat",
+      "name": "Tado thermostat (nursery)",
+      "room_id": "69da31be-ece9-49ef-86e7-bfd7b6bf32d1",
+      "adapter": "tado",
+      "external_id": null,
+      "capabilities": ["read_temperature", "read_setpoint", "write_setpoint"],
+      "provenance": "unverified_api"
+    },
+    {
+      "id": "665a9b9f-06d3-4a0e-91bf-2601b957083c",
+      "kind": "thermostat",
+      "name": "Tado thermostat (bathroom)",
+      "room_id": "dc07b943-d9a0-4d85-b96a-c7a479e8ae89",
+      "adapter": "tado",
+      "external_id": null,
+      "capabilities": ["read_temperature", "read_setpoint", "write_setpoint"],
+      "provenance": "unverified_api"
+    },
+    {
+      "id": "388ad6a8-77c2-4a30-8660-e63e5196ca8e",
+      "kind": "thermostat",
+      "name": "Tado thermostat (office)",
+      "room_id": "7b290880-803b-422a-aea0-9c333237a32b",
+      "adapter": "tado",
+      "external_id": null,
+      "capabilities": ["read_temperature", "read_setpoint", "write_setpoint"],
+      "provenance": "unverified_api"
+    },
+    {
+      "id": "f732a1c6-8a6b-48fc-8441-d652efe828e0",
+      "kind": "thermostat",
+      "name": "Tado thermostat (hall)",
+      "room_id": "3b460f84-e2e0-409e-a618-456c357ddfcb",
+      "adapter": "tado",
+      "external_id": null,
+      "capabilities": ["read_temperature", "read_setpoint", "write_setpoint"],
+      "provenance": "unverified_api"
+    },
+    {
+      "id": "ac4f0a83-74fb-4acb-9bb2-f893c59bc9ee",
+      "kind": "thermostat",
+      "name": "Tado thermostat (toilet)",
+      "room_id": "4f59bfca-605c-4b05-95a5-e99aff55c2f6",
+      "adapter": "tado",
+      "external_id": null,
+      "capabilities": ["read_temperature", "read_setpoint", "write_setpoint"],
+      "provenance": "unverified_api"
+    },
+    {
+      "id": "5ee37f01-b157-45a8-a8b2-c316c67c5036",
+      "kind": "thermostat",
+      "name": "Tado thermostat (wardrobe)",
+      "room_id": "d291841f-9dca-4aa5-b401-6c56f5468b64",
+      "adapter": "tado",
+      "external_id": null,
+      "capabilities": ["read_temperature", "read_setpoint", "write_setpoint"],
+      "provenance": "unverified_api"
+    },
+    {
+      "id": "0015cc35-704b-4fab-a4b2-37ebc0bca8e4",
+      "kind": "thermostat",
+      "name": "Tado thermostat (bedroom)",
+      "room_id": "1c282c24-b8bf-47fb-8c3a-6f2271658dac",
+      "adapter": "tado",
+      "external_id": null,
+      "capabilities": ["read_temperature", "read_setpoint", "write_setpoint"],
+      "provenance": "unverified_api"
+    },
+    {
+      "id": "34d85b98-bf45-44b9-9a74-607b9a665d46",
+      "kind": "thermostat",
+      "name": "Tado thermostat (washroom)",
+      "room_id": "4c9b2091-4d8f-4f9e-bce1-776aea539ac0",
+      "adapter": "tado",
+      "external_id": null,
+      "capabilities": ["read_temperature", "read_setpoint", "write_setpoint"],
+      "provenance": "unverified_api"
+    },
+    {
+      "id": "6f24ec42-7652-4d6c-8941-8f8d97989332",
+      "kind": "emitter",
+      "name": "Radiator (living room)",
+      "room_id": "6f1282eb-23f7-4c3e-8905-e056c1a35220",
+      "controlled_by": "89389cb1-1271-490b-9f91-de2cef5b7603",
+      "rated_w_at_dt50": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "2dfb7dae-16b0-44f6-88ff-807a032c0273",
+      "kind": "emitter",
+      "name": "Radiator (kitchen)",
+      "room_id": "be1dd3a2-ed38-473b-8c60-8d90a7b2aea4",
+      "controlled_by": "ebcc8f13-c723-45ef-b2af-5b8a4e89ce02",
+      "rated_w_at_dt50": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "bfb53aa2-cb52-44f1-aa4b-7406572e1c49",
+      "kind": "emitter",
+      "name": "Radiator (nursery)",
+      "room_id": "69da31be-ece9-49ef-86e7-bfd7b6bf32d1",
+      "controlled_by": "abb80d22-02a9-4987-a5ee-2d9a58920083",
+      "rated_w_at_dt50": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "1fac78e5-d7a6-4832-8caf-2a8fd35ce8d1",
+      "kind": "emitter",
+      "name": "Radiator (bathroom)",
+      "room_id": "dc07b943-d9a0-4d85-b96a-c7a479e8ae89",
+      "controlled_by": "665a9b9f-06d3-4a0e-91bf-2601b957083c",
+      "rated_w_at_dt50": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "454fe63e-a319-48d7-a731-875a41a8b689",
+      "kind": "emitter",
+      "name": "Radiator (office)",
+      "room_id": "7b290880-803b-422a-aea0-9c333237a32b",
+      "controlled_by": "388ad6a8-77c2-4a30-8660-e63e5196ca8e",
+      "rated_w_at_dt50": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "3eb9f204-2e7c-45d2-bc21-108a2eb813a9",
+      "kind": "emitter",
+      "name": "Radiator (hall)",
+      "room_id": "3b460f84-e2e0-409e-a618-456c357ddfcb",
+      "controlled_by": "f732a1c6-8a6b-48fc-8441-d652efe828e0",
+      "rated_w_at_dt50": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "23bad22c-d41b-4795-8129-65121431e5a3",
+      "kind": "emitter",
+      "name": "Radiator (toilet)",
+      "room_id": "4f59bfca-605c-4b05-95a5-e99aff55c2f6",
+      "controlled_by": "ac4f0a83-74fb-4acb-9bb2-f893c59bc9ee",
+      "rated_w_at_dt50": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "1e4940ae-bf85-4a4d-ba9a-dcf7dc92395e",
+      "kind": "emitter",
+      "name": "Radiator (wardrobe)",
+      "room_id": "d291841f-9dca-4aa5-b401-6c56f5468b64",
+      "controlled_by": "5ee37f01-b157-45a8-a8b2-c316c67c5036",
+      "rated_w_at_dt50": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "6bf598a8-6aaa-44f8-8408-09bd95992e13",
+      "kind": "emitter",
+      "name": "Radiator (bedroom)",
+      "room_id": "1c282c24-b8bf-47fb-8c3a-6f2271658dac",
+      "controlled_by": "0015cc35-704b-4fab-a4b2-37ebc0bca8e4",
+      "rated_w_at_dt50": null,
+      "provenance": "unknown"
+    },
+    {
+      "id": "239dec92-9274-4dfa-a756-964f28133ec4",
+      "kind": "emitter",
+      "name": "Radiator (washroom)",
+      "room_id": "4c9b2091-4d8f-4f9e-bce1-776aea539ac0",
+      "controlled_by": "34d85b98-bf45-44b9-9a74-607b9a665d46",
+      "rated_w_at_dt50": null,
+      "provenance": "unknown"
+    }
+  ],
+  "heat_paths": [
+    {
+      "id": "radiator-circuit",
+      "generator_id": "0eb76129-21c5-4e28-a5bd-264c9382c61c",
+      "emitter_ids": [
+        "6f24ec42-7652-4d6c-8941-8f8d97989332",
+        "2dfb7dae-16b0-44f6-88ff-807a032c0273",
+        "bfb53aa2-cb52-44f1-aa4b-7406572e1c49",
+        "1fac78e5-d7a6-4832-8caf-2a8fd35ce8d1",
+        "454fe63e-a319-48d7-a731-875a41a8b689",
+        "3eb9f204-2e7c-45d2-bc21-108a2eb813a9",
+        "23bad22c-d41b-4795-8129-65121431e5a3",
+        "1e4940ae-bf85-4a4d-ba9a-dcf7dc92395e",
+        "6bf598a8-6aaa-44f8-8408-09bd95992e13",
+        "239dec92-9274-4dfa-a756-964f28133ec4"
+      ],
+      "distribution": "rating_weighted_open_valves",
+      "provenance": "config"
+    },
+    {
+      "id": "kmp-direct",
+      "generator_id": "23420987-e2ac-4897-9333-4d577484d084",
+      "target_room_id": "6f1282eb-23f7-4c3e-8905-e056c1a35220",
+      "provenance": "config"
+    },
+    {
+      "id": "storage-heater-direct",
+      "generator_id": "09963c36-c69b-4472-be21-4d6095292759",
+      "target_room_id": "d981f1f6-bf20-40e4-8526-c008ad0f30b2",
+      "provenance": "config"
+    }
+  ],
+  "room_priors": [
+    {"room_id": "6f1282eb-23f7-4c3e-8905-e056c1a35220", "capacity_j_per_k": 8000000, "ua_w_per_k": 80, "provenance": "placeholder"},
+    {"room_id": "be1dd3a2-ed38-473b-8c60-8d90a7b2aea4", "capacity_j_per_k": 6000000, "ua_w_per_k": 60, "provenance": "placeholder"},
+    {"room_id": "69da31be-ece9-49ef-86e7-bfd7b6bf32d1", "capacity_j_per_k": 6000000, "ua_w_per_k": 60, "provenance": "placeholder"},
+    {"room_id": "dc07b943-d9a0-4d85-b96a-c7a479e8ae89", "capacity_j_per_k": 4000000, "ua_w_per_k": 50, "provenance": "placeholder"},
+    {"room_id": "7b290880-803b-422a-aea0-9c333237a32b", "capacity_j_per_k": 6000000, "ua_w_per_k": 60, "provenance": "placeholder"},
+    {"room_id": "3b460f84-e2e0-409e-a618-456c357ddfcb", "capacity_j_per_k": 5000000, "ua_w_per_k": 60, "provenance": "placeholder"},
+    {"room_id": "4f59bfca-605c-4b05-95a5-e99aff55c2f6", "capacity_j_per_k": 2000000, "ua_w_per_k": 40, "provenance": "placeholder"},
+    {"room_id": "d291841f-9dca-4aa5-b401-6c56f5468b64", "capacity_j_per_k": 4000000, "ua_w_per_k": 40, "provenance": "placeholder"},
+    {"room_id": "1c282c24-b8bf-47fb-8c3a-6f2271658dac", "capacity_j_per_k": 6000000, "ua_w_per_k": 60, "provenance": "placeholder"},
+    {"room_id": "4c9b2091-4d8f-4f9e-bce1-776aea539ac0", "capacity_j_per_k": 3000000, "ua_w_per_k": 40, "provenance": "placeholder"},
+    {"room_id": "d981f1f6-bf20-40e4-8526-c008ad0f30b2", "capacity_j_per_k": 3000000, "ua_w_per_k": 40, "provenance": "placeholder"}
+  ],
+  "thermal_links": [
+    {"room_a_id": "6f1282eb-23f7-4c3e-8905-e056c1a35220", "room_b_id": "be1dd3a2-ed38-473b-8c60-8d90a7b2aea4", "conductance_w_per_k": 30, "provenance": "placeholder"},
+    {"room_a_id": "6f1282eb-23f7-4c3e-8905-e056c1a35220", "room_b_id": "69da31be-ece9-49ef-86e7-bfd7b6bf32d1", "conductance_w_per_k": 30, "provenance": "placeholder"},
+    {"room_a_id": "6f1282eb-23f7-4c3e-8905-e056c1a35220", "room_b_id": "dc07b943-d9a0-4d85-b96a-c7a479e8ae89", "conductance_w_per_k": 20, "provenance": "placeholder"},
+    {"room_a_id": "3b460f84-e2e0-409e-a618-456c357ddfcb", "room_b_id": "4f59bfca-605c-4b05-95a5-e99aff55c2f6", "conductance_w_per_k": 15, "provenance": "placeholder"},
+    {"room_a_id": "3b460f84-e2e0-409e-a618-456c357ddfcb", "room_b_id": "d291841f-9dca-4aa5-b401-6c56f5468b64", "conductance_w_per_k": 15, "provenance": "placeholder"},
+    {"room_a_id": "3b460f84-e2e0-409e-a618-456c357ddfcb", "room_b_id": "1c282c24-b8bf-47fb-8c3a-6f2271658dac", "conductance_w_per_k": 15, "provenance": "placeholder"},
+    {"room_a_id": "3b460f84-e2e0-409e-a618-456c357ddfcb", "room_b_id": "4c9b2091-4d8f-4f9e-bce1-776aea539ac0", "conductance_w_per_k": 15, "provenance": "placeholder"},
+    {"room_a_id": "d291841f-9dca-4aa5-b401-6c56f5468b64", "room_b_id": "1c282c24-b8bf-47fb-8c3a-6f2271658dac", "conductance_w_per_k": 10, "provenance": "placeholder"},
+    {"room_a_id": "4f59bfca-605c-4b05-95a5-e99aff55c2f6", "room_b_id": "4c9b2091-4d8f-4f9e-bce1-776aea539ac0", "conductance_w_per_k": 10, "provenance": "placeholder"},
+    {"room_a_id": "d981f1f6-bf20-40e4-8526-c008ad0f30b2", "room_b_id": "3b460f84-e2e0-409e-a618-456c357ddfcb", "conductance_w_per_k": 10, "provenance": "placeholder"}
+  ]
+}

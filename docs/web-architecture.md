@@ -29,8 +29,10 @@ tests/web/                API, authorization, freshness and storage tests
 docs/web-architecture.md  Architecture, API contract and staged roadmap
 ```
 
-In the first stage the web app reads the existing thermal SQLite database using
-SQLAlchemy and existing table definitions, with a read-only connection. It does
+The web app reads the existing thermal SQLite database using SQLAlchemy and
+existing table definitions. Room targets, limits and temporary overrides are
+the only runtime data written by the GUI; these writes use an existing database
+and never dispatch commands. It does
 not create or migrate the controller database, contact providers, load joblib
 models, or write device settings. Data is a cached observation, not a live
 provider query or proof of actual heat output. The timestamp is for the whole
@@ -48,9 +50,16 @@ Internet-facing identity provider.
 
 ## Data and API requirements
 
-Stage one provides `POST /api/session`, `DELETE /api/session`, `GET /api/status`
-and `WS /api/live`. FastAPI's `/docs` and `/openapi.json` describe HTTP schemas.
-Each live message has the same shape as the status response; errors and missing
+The API provides `POST /api/session`, `DELETE /api/session`, `GET /api/status`,
+`GET /api/house`, `GET /api/rooms/{room_id}/history`, `GET /api/room-plan`,
+`PUT /api/rooms/{room_id}/settings`, `POST /api/rooms/{room_id}/override`,
+and `WS /api/live`. Mutations require the authenticated session and trusted
+origin. Overrides start at the next quarter-hour boundary and are rounded up
+to whole 15-minute intervals to match the room planner. Conflicting future
+overrides and limits incompatible with schedules or overrides are rejected.
+FastAPI's `/docs` and `/openapi.json` describe HTTP schemas.
+WebSocket status messages retain the status response shape, while separate house
+messages carry room data; errors and missing
 or stale data are explicit. Only authenticated sessions can read status or
 subscribe. APIs never return integration secrets. The session endpoint accepts
 only the web login password, not provider credentials.
@@ -66,7 +75,7 @@ requested logs. Those require explicitly instrumented controller-side data,
 with retention, privacy, migrations and provenance defined before displaying
 them; never invent values or treat estimates as measurements.
 
-Configuration changes need a validated, versioned controller-owned settings
+Physical configuration changes need a validated, versioned controller-owned settings
 interface and an explicit apply/restart policy; secrets remain backend-only.
 Manual commands require a durable, authenticated, audited controller-owned
 command channel with idempotency, expiry, authorization, acknowledgements,

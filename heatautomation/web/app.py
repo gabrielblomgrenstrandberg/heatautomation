@@ -11,12 +11,16 @@ from typing import Literal, Optional
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .. import config
+from ..house.config import HouseConfig
+from .house_config import ConfigurationConflict, apply_configuration, read_configuration, save_configuration
 from .status import StatusUnavailable, read_status
+from .rooms import read_history, read_house, read_plan, set_override, set_room_settings
 
 
 class Login(BaseModel):
@@ -44,6 +48,26 @@ class Status(BaseModel):
     estimated_pump_cost_sek_kwh: Optional[float] = None
 
 
+class RoomSettings(BaseModel):
+    target_c: float = Field(ge=-30, le=60, allow_inf_nan=False)
+    min_c: float = Field(ge=-30, le=60, allow_inf_nan=False)
+    max_c: float = Field(ge=-30, le=60, allow_inf_nan=False)
+
+
+class RoomOverride(BaseModel):
+    target_c: float = Field(ge=-30, le=60, allow_inf_nan=False)
+    minutes: int = Field(ge=1, le=10080, strict=True)
+
+
+class HouseConfigurationUpdate(BaseModel):
+    revision: str = Field(min_length=64, max_length=64)
+    config: HouseConfig
+
+
+class HouseConfigurationApply(BaseModel):
+    revision: str = Field(min_length=64, max_length=64)
+
+
 def create_app(password=None, database_path=None, origin=None, secure_cookie=None):
     password = password if password is not None else os.environ.get("HEATAUTOMATION_WEB_PASSWORD", "")
     if len(password) < 32:
@@ -52,9 +76,17 @@ def create_app(password=None, database_path=None, origin=None, secure_cookie=Non
     if secure_cookie is None:
         secure_cookie = os.environ.get("HEATAUTOMATION_WEB_SECURE_COOKIE", "").lower() == "true"
     database_path = database_path or config.THERMAL_DATABASE_PATH
+    house_config_path = Path(os.environ.get("HEATAUTOMATION_HOUSE_CONFIG", "config/house.json")).resolve()
     sessions = {}
     attempts = []
     app = FastAPI(title="Heat Automation monitoring API")
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(_request: Request, error: RequestValidationError):
+        return JSONResponse(status_code=422, content={"detail": [
+            {"type": item["type"], "loc": list(item["loc"]), "msg": item["msg"]}
+            for item in error.errors()
+        ]})
 
     @app.middleware("http")
     async def prevent_api_caching(request, call_next):
@@ -117,6 +149,90 @@ def create_app(password=None, database_path=None, origin=None, secure_cookie=Non
         except StatusUnavailable as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
+    @app.get("/api/house")
+    async def house(request: Request):
+        require_session(request)
+        try:
+            return await run_in_threadpool(read_house, database_path)
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/api/house-configuration")
+    async def house_configuration(request: Request):
+        require_session(request)
+        try:
+            return await run_in_threadpool(read_configuration, house_config_path)
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.put("/api/house-configuration")
+    async def update_house_configuration(payload: HouseConfigurationUpdate, request: Request):
+        require_session(request)
+        require_origin(request)
+        try:
+            revision = await run_in_threadpool(
+                save_configuration, house_config_path, payload.revision, payload.config)
+            return {"revision": revision}
+        except ConfigurationConflict as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.post("/api/house-configuration/apply", status_code=204)
+    async def apply_house_configuration(payload: HouseConfigurationApply, request: Request):
+        require_session(request)
+        require_origin(request)
+        try:
+            await run_in_threadpool(apply_configuration, house_config_path, database_path, payload.revision)
+        except ConfigurationConflict as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/api/rooms/{room_id}/history")
+    async def room_history(room_id: str, request: Request):
+        require_session(request)
+        try:
+            return await run_in_threadpool(read_history, database_path, room_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/api/room-plan")
+    async def room_plan(request: Request):
+        require_session(request)
+        try:
+            return await run_in_threadpool(read_plan, database_path)
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.put("/api/rooms/{room_id}/settings", status_code=204)
+    async def room_settings(room_id: str, payload: RoomSettings, request: Request):
+        require_session(request)
+        require_origin(request)
+        try:
+            await run_in_threadpool(set_room_settings, database_path, room_id,
+                                    payload.target_c, payload.min_c, payload.max_c)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.post("/api/rooms/{room_id}/override", status_code=204)
+    async def room_override(room_id: str, payload: RoomOverride, request: Request):
+        require_session(request)
+        require_origin(request)
+        try:
+            await run_in_threadpool(set_override, database_path, room_id,
+                                    payload.target_c, payload.minutes)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
     @app.websocket("/api/live")
     async def live(websocket: WebSocket):
         token = websocket.cookies.get("heat_session")
@@ -133,6 +249,11 @@ def create_app(password=None, database_path=None, origin=None, secure_cookie=Non
                     })
                 except StatusUnavailable as error:
                     await websocket.send_json({"type": "error", "message": str(error)})
+                try:
+                    house_data = await run_in_threadpool(read_house, database_path)
+                    await websocket.send_json({"type": "house", "data": jsonable_encoder(house_data)})
+                except StatusUnavailable as error:
+                    await websocket.send_json({"type": "house_error", "message": str(error)})
                 await asyncio.sleep(5)
             await websocket.close(code=1008)
         except WebSocketDisconnect:

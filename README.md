@@ -12,10 +12,12 @@ A script for selecting the best heat source based on spot price and temperature
 Run the test suite from the repository root with
 `python -m unittest discover -s tests`.
 
-## Web monitoring (initial read-only stage)
+## Web monitoring and room settings
 
 The web application is a separate process and does **not** control equipment.
-It reads the thermal database produced by the running controller; if thermal
+It reads the thermal database produced by the running controller and can save
+room targets, limits and temporary overrides in SQL; it never sends equipment
+commands or enables automatic room control. If thermal
 learning is disabled, or the database is missing or stale, the dashboard reports
 that condition. It does not call provider APIs. The observation time is the
 collection time, not a guarantee of fresh provider data or physical heat output.
@@ -69,12 +71,25 @@ Use the same working directory for the controller and web server or an absolute
 thermal database path in configuration. `/docs` contains the HTTP API
 documentation. The WebSocket at
 `/api/live` emits `{type: "status", data: ...}` snapshots or
-`{type: "error", message: ...}`; it requires the authenticated session and
+`{type: "error", message: ...}`, followed by separate `house` or `house_error`
+messages; it requires the authenticated session and
 configured origin. The dashboard observes database updates at five-second
 intervals; the controller normally collects every five minutes.
 The displayed target is Sensibo's reported target, not a confirmed scheduler
 setting. Heat-pump cost is the observed Tibber total price divided by estimated
 COP; additional grid fees are not included.
+
+The room view requires the house migrations and a reconciled physical
+configuration. It displays measured temperatures, configured heat paths and
+thermal links, stored prediction comparisons, and saved simulation-only room
+plans. Room schedules are not resolved in the overview, so their effective
+target is shown as unknown unless an override is active. Room targets and
+limits are saved in SQL, not dispatched to devices. Overrides start at the
+next 15-minute boundary and durations round up to 15-minute intervals; an
+overlapping future override is rejected. Physical configuration, mappings,
+automatic control, optimization settings, and complete historical series are
+not yet managed by the GUI. Missing measurements and actual heat delivery
+remain unknown.
 
 For frontend development, disable automatic web startup, run the web server
 separately with `python -m uvicorn heatautomation.web.app:create_app --factory
@@ -95,6 +110,339 @@ The web service has no command, configuration, or scheduler execution API.
 
 After installing the web dependencies, run the focused tests with
 `python -m unittest tests.web.test_web`.
+
+## Multi-room heating foundation
+
+The multi-room implementation is being introduced incrementally. The current
+code adds validated physical configuration, additive Alembic migrations,
+idempotent SQL reconciliation, a room-level thermal model, a Tado Classic
+service, and a guarded command interface. Device polling, automatic room
+control, and the multi-room optimizer are not wired into the controller. A
+standalone Mill Gen 3 integration is also available.
+
+Copy `config/house.example.json` to `config/house.json`, replace placeholder
+thermal values with verified physical data, and keep the real file local; it is
+git-ignored. Before using a database with the new schema, create a backup and
+apply migrations:
+
+```powershell
+python -m heatautomation.house.migrate --database thermal_history.sqlite3
+python -m heatautomation.house.cli reconcile --database thermal_history.sqlite3 --config config/house.json
+```
+
+The migration command creates a SQLite backup beside an existing database
+before upgrading it. Reconciliation only adds missing records or updates
+physical configuration fields; learned parameter values and runtime settings
+remain in SQL. Restore the backup if a migration fails. The legacy
+`thermal_sensors` row named `indoor_c` is retained; assigning it to a room and
+backfilling room measurements requires an explicit room mapping first.
+
+To explicitly reset a room's learned thermal values to its current
+configuration priors (with an audit event):
+
+```powershell
+python -m heatautomation.house.cli reset-parameters --database thermal_history.sqlite3 --room <room-uuid>
+```
+
+### Prediction-only room model
+
+The standalone `heatautomation.thermal.rooms.RoomThermalService` uses the SQL
+room parameters, settings and symmetric thermal graph. The example graph
+connects KMP's living room to the kitchen, nursery and bathroom, not to the
+office or Floor 0. Changing an existing house file requires reconciliation;
+removed links are soft-deleted. Priors in the example are placeholders.
+
+After migrating and reconciling, `save_snapshot(observed_at, temperatures,
+outdoor_c, heat_inputs)` records one synchronized observation and associated
+room temperatures. Temperature entries are keyed by room UUID and contain
+`value` in Celsius, `quality`, and a configured room sensor's
+`source_device_id`. Heat entries are keyed by room UUID and generator UUID;
+each contains delivered `watts` and `classification` (`measured` or
+`estimated`). Supply a source entry even for known zero delivery. Unknown
+delivery must be omitted, **not inferred from an on command, a Tado demand
+percentage, a Mill mode, or a generator's rated capacity**. Inputs must
+represent the same instant; the caller is responsible for matching timestamps,
+sensor identity and data quality. The existing provider adapters do not yet
+automatically supply a synchronized, verified room heat-delivery history.
+
+For example, after resolving trustworthy readings, callers can persist and
+forecast them as follows (the IDs and readings must come from the actual
+configuration and measurements):
+
+```python
+from datetime import datetime, timezone
+from sqlalchemy import create_engine
+from heatautomation.thermal.rooms import RoomThermalService
+
+engine = create_engine("sqlite:///thermal_history.sqlite3")
+thermal = RoomThermalService(engine)
+observed_at = datetime.now(timezone.utc)
+# Populate these with timestamp-aligned real observations, not commands.
+temperatures = {}  # room UUID -> {value, source_device_id, quality}
+heat_inputs = {}   # room UUID -> generator UUID -> {watts, classification}
+snapshot = thermal.save_snapshot(observed_at, temperatures, None, heat_inputs)
+forecasts = thermal.predict(observed_at, snapshot)
+print(forecasts)  # Unknown until sufficient inputs are supplied.
+engine.dispose()
+```
+
+`predict(observed_at, snapshot)` returns each room's 15-, 30-, 60-, 120-,
+180- and 360-minute forecast, heat-up/cool-down rates, source inputs, heat
+transfer, heat-loss coefficient, capacity, demand and time to target. The
+model assumes constant outdoor temperature and delivered heat for the
+forecast; capacity and graph transfer provide thermal inertia. Demand is a
+shadow estimate, not a command. Missing inputs or a missing room in a coupled
+component make its forecast unknown. Time-to-target is unknown when the target
+is missing or not reached within six hours. Runtime targets come from SQL
+`room_settings`; schedules and overrides are not yet resolved by this service.
+
+Forecasts are stored for later comparison. `evaluate_predictions()` matches
+them with good measured room temperatures within five minutes of each target
+time and returns MAE and bias separately for each room and horizon. It waits
+until the matching window has closed; forecasts generated after their target
+time are not recorded as prospective predictions. `learn()` fits a constrained
+physics-based model only when sufficient good temperatures and **measured
+delivered heat** exist, the inputs are identifiable, and a chronological
+holdout improves on the current parameters. Coupled conductances are updated
+only when both room fits agree; SQL retains learned values across reloads.
+The result reports why each room was or was not updated. Run these methods
+explicitly; they do not train or control devices automatically.
+
+`import_legacy_history(database, room_id, sensibo_device_id)` imports legacy
+Sensibo/weather rows only after an explicit Sensibo-to-room assignment.
+Legacy timestamps are collection times, not verified sensor timestamps, so
+temperatures are marked suspect and legacy source capacities are not treated
+as delivered room heat. Tado, KMP and Mill observations require explicit,
+timestamp-aligned ingestion before they can support learning. With the
+currently unverified integrations, many forecasts and all learned parameters
+may therefore remain unavailable. Real-device accuracy validation is still
+required before using this model for decisions.
+
+The initial approach uses physical room parameters shared with the existing
+heat balance, rather than a separate complex estimator per room. Ridge or
+incremental SGD could be evaluated once representative history exists;
+random forests and gradient boosting need more data and chronological
+validation before they could replace or supplement the physical model.
+No such model has been validated against this house yet.
+
+### Multi-room MPC simulation
+
+The existing single-temperature MPC is unchanged. The separate
+`heatautomation.control.room_mpc` planner produces **simulation-only** plans;
+it never issues device commands or starts automatic control. It solves 144
+consecutive 15-minute intervals using a coupled linear heat balance and the
+SQL thermal graph. KMP's configured direct room receives its heat; neighboring
+rooms receive only modeled physical transfer. Storage's direct heater is
+separate from the radiator circuit. Radiator heat is a hypothetical room
+delivery allocation, not proof that Tado valves or the uncontrollable SPRSUN
+heat pump can achieve it.
+
+Use the existing `mpc_monitor.build_intervals` to prepare a full 36-hour
+price/weather forecast, then `room_mpc.forecasts_from_legacy` to obtain
+`Forecast` objects and the heat-pump capacity forecast. That helper refuses
+partial coverage; current providers may not offer 36 hours of prices.
+Construct a `Source` for each configured generator using verified ratings,
+per-room emitter capacities, operating costs and, for KMP/Mill, known initial
+on/off state, elapsed duration and dwell/max-runtime limits in quarter-hour
+steps. Set the radiator source's `capacity_forecast_kw` from the returned
+capacity list. `room_capacity_kw` maps room UUIDs to maximum **delivered**
+heat; pellet/electric on/off sources have one direct room and fixed output.
+The model does not infer a valve's delivered output from its commanded state.
+The example's unknown ratings must be measured or otherwise validated first.
+
+Call `rooms_from_database(engine, forecasts, readings, sources,
+timezone_name=...)`, then `optimize_rooms(rooms, sources, forecasts)`.
+Readings are keyed by room UUID and contain `value`, timezone-aware
+`observed_at`, `quality="good"`, `classification="measured"`, a configured
+`source_device_id`, and a defensible `uncertainty_c`. The SQL room settings
+must include minimum, maximum and target temperatures. Room schedules and
+manual overrides are resolved in the supplied house timezone; schedule and
+override boundaries must align with 15-minute intervals. Missing or stale
+inputs, missing source assignments, incomplete forecasts, overlapping
+schedules/overrides or infeasible comfort constraints fail explicitly.
+
+The plan contains room-level temperatures, targets, estimated maintenance
+demand, source heat, transfer, activity, explanations and estimated costs.
+It limits planned temperatures to the room maximum and at most 2°C above
+the current target, with an explicit uncertainty margin. It minimizes
+estimated energy cost, not a guarantee of actual expenditure; the radiator
+electric cost assumes the forecast COP applies to delivered heat. Fixed
+binary KMP/Mill output and constant uncertainty margins are simplifying
+assumptions, not verified equipment behavior. Time-limited solutions are
+accepted only when all constraints verify and their solver gap is within the
+configured tolerance; solver status and gap are included. Optional
+`save_simulation(engine, plan)` persists the plan to the existing optimizer
+tables. Validate model accuracy, thermal capacities, equipment response and
+simulation outcomes against real measurements before considering control.
+
+See [the multi-room architecture](./docs/multi-room-architecture.md) for the
+physical model, schema, safety boundaries, integration research, and rollout
+plan.
+
+## Tado Classic integration
+
+The standalone synchronous `TadoService` supports Classic/V3 cloud homes.
+Tado X support is **not verified**. It uses Tado's device authorization and
+the unofficial Classic API, which can change without notice. It is not started
+by the controller and does not automatically control heating. Tado may impose
+subscription-dependent daily API quotas. Reads use a five-minute per-endpoint
+cache by default; 429 responses respect `Retry-After` when supplied and
+otherwise pause requests for 30 minutes. Errors are raised rather than
+returning expired cached data as fresh.
+
+Copy the example house configuration as described above. For initial
+authorization and discovery, run the following in a Python shell from the
+repository root. Choose a token path outside the repository in a directory
+accessible only to the application user:
+
+```python
+import time
+from pathlib import Path
+from heatautomation.house.config import load_house_config
+from heatautomation.integrations.tado import TadoService, TokenFile
+
+house = load_house_config("config/house.json")
+token_file = TokenFile(Path.home() / ".heatautomation" / "tado-token.json")
+tado = TadoService(house, token_file)
+if token_file.load() is None:
+    auth = tado.begin_authentication()
+    print("Open", auth["verification_uri"], "and enter", auth["user_code"])
+    while not tado.poll_authentication():
+        time.sleep(auth["interval"])
+print(tado.get_homes())
+print(tado.get_rooms())
+tado.close()
+```
+
+In `config/house.json`, fill in each `tado_rooms` entry's numeric `home_id`
+and `zone_id` from discovery. The `room_id` is the stable house UUID, not
+the Tado room name or device serial. An unmapped entry has both IDs `null`;
+zone IDs are unique only within a home. Reload the configuration and create
+a new service after editing it. The example contains all ten requested Tado
+rooms; the storage room is intentionally not mapped.
+
+`get_rooms()` discovers all zones, including unmapped ones. `get_status()`,
+`get_room_status(room_id)`, `get_room_temperature(room_id)`, and
+`get_heating_activity()` read mapped room data. The reported target is the
+provider's current setting, not proof of a successful command. The reported
+heating-power percentage is a demand/activity signal, not measured radiator
+heat delivery: `radiator_heating_activity` remains unknown. Readings expose
+the provider timestamp when present, receipt time, classification, quality,
+and zone identity; the individual sensor identity is unknown. An offline
+device can still have an old reported value, marked stale.
+
+`set_room_temperature` and `set_heating_enabled` require an attached
+`CommandGate`. With TEST_MODE active they are audited as simulated and do
+not make API requests. Outside TEST_MODE, the gate must also explicitly enable
+automatic control and have confirmed device connectivity; the adapter checks
+the HEATING capability and temperature limits before sending a temporary
+overlay until the next schedule block. Enabling heating requires an explicit
+target. A sent command does not prove that the room warmed or heat was
+delivered. Live control is not wired to the application by default.
+
+Refresh tokens rotate and are saved atomically by `TokenFile`; protect the token
+file and its directory and never commit or share them. On Unix the temporary
+file is restricted to owner access; on Windows, set appropriate directory ACLs
+because `chmod` does not enforce equivalent privacy. Avoid HTTP debug logging,
+which can expose OAuth request parameters. Reauthorize if token persistence
+fails or access is revoked. Do not copy tokens or authorization codes into
+logs, issues, or configuration examples.
+
+## Mill storage heater
+
+The standalone Mill integration uses the [manufacturer's Gen 3 local REST
+API](https://github.com/Mill-International-AS/Generation_3_REST_API); verify
+that the outlet is Gen 3 and enable its local API. The configured device is
+the storage-room outlet on Floor 0, and the separately configured electric
+heater is its generator. Set that generator's `rated_kw` in the local
+`config/house.json` to the verified heater rating; `null` means unknown.
+
+Mill documents an API key in the `Authentication` header and HTTPS with a
+self-signed certificate after provisioning. Provision the key using Mill's
+instructions, keep it in the ignored environment or a secret store, and
+supply a trusted certificate or CA bundle whose certificate identity matches
+the device hostname. The client refuses HTTP, missing trust bundles,
+redirects, and certificate verification bypasses. It does not configure the
+device's key or discover LAN devices: `get_devices()` returns the configured
+device after contacting it.
+
+Create `MillLocalDevice`, `MillPolicy` and `MillHeatingSource` from
+`heatautomation.integrations.mill`. Pass the already migrated/reconciled house,
+the generator and outlet UUIDs from the house file, a `CommandGate` using the
+same database, and explicit minimum-on, minimum-off, maximum-on and polling
+durations in seconds. Policy values are application-supplied runtime settings;
+do not use arbitrary examples as equipment safety limits. Call `start_monitor()`
+before requesting live on; `set_power(True/False)` uses the command gate, and
+`set_manual_override(enabled, duration_seconds)` requests a temporary override.
+Overrides do not bypass switching times, fault latches or the maximum runtime;
+expiry clears the override but does not itself issue a command.
+
+For example, after the migration and reconciliation above, create the service
+in your own process. Replace the policy durations only after validating them
+for the equipment; these examples are placeholders, not safety recommendations:
+
+```python
+import os
+from sqlalchemy import create_engine
+from heatautomation import config
+from heatautomation.devices.command_gate import CommandGate
+from heatautomation.house.config import load_house_config
+from heatautomation.integrations.mill import MillHeatingSource, MillLocalDevice, MillPolicy
+
+house = load_house_config("config/house.json")
+engine = create_engine("sqlite:///thermal_history.sqlite3")
+device = MillLocalDevice(
+    os.environ["MILL_DEVICE_URL"], os.environ["MILL_API_KEY"],
+    os.environ["MILL_CA_BUNDLE"],
+)
+gate = CommandGate(engine, test_mode=config.TEST_MODE, automatic_control_enabled=False)
+service = MillHeatingSource(
+    house, device,
+    "09963c36-c69b-4472-be21-4d6095292759",
+    "c1565fc6-f3e9-40db-a83d-a4dc4cd195c1",
+    MillPolicy(min_on_seconds=300, min_off_seconds=300,
+               max_on_seconds=3600, poll_seconds=30),
+    gate,
+)
+print(service.get_devices())
+print(service.get_status())
+device.close()
+engine.dispose()
+```
+
+The example is read-only and does not start the monitor or enable control. If
+live control is deliberately configured later, use a single owning process
+for the outlet and keep its monitor running. API keys must never be placed in
+the house file or committed.
+
+The service is **not wired into the existing controller**. TEST_MODE commands
+are audited as simulated. Outside TEST_MODE, the gate must explicitly enable
+control, and the service confirms connectivity before dispatch. It uses
+`POST /operation-mode` (`Control individually` or `OFF`): individual mode
+follows the Mill device's own temperature setting, so enabling it is not a
+guarantee that the socket relay is energized. Mill's `switched_on` is exposed
+as a device-reported field; the documented API does not establish a separate
+socket relay readback or a measured electricity meter for this outlet. Actual
+outlet state, heat delivery, electrical consumption and operating hours remain
+unknown. The API's `current_power` is exposed separately without treating it
+as measured outlet electricity.
+
+The status optionally estimates energy and cost from sampled enabled-mode
+hours multiplied by configured rated capacity and a caller-supplied price per
+kWh. This assumes full rated consumption during sampled intervals, excludes
+gaps and is not metered energy or proof of heat output. Statistics and manual
+overrides are process-local and reset at restart.
+
+**Safety limitation:** the monitor is a best-effort software watchdog, not a
+hard runtime cutoff. It requires a running process, database, network and
+device; shutdown can be delayed by polling and request timeouts or fail
+entirely when communication is lost. At startup, or after loss of
+communication, an observed enabled mode triggers an off request before
+re-enabling is permitted. A device fault also latches the safety state.
+`stop_monitor()` does not switch the outlet off. Use an independently verified
+hardware thermostat/thermal cutoff and a device-side timer for any required
+hard maximum runtime; do not rely on this integration as the sole safety
+mechanism. Monitor failures are surfaced through `get_health()` and logs.
 
 ## Configuration
 

@@ -12,6 +12,7 @@ from heatautomation.learning import database as thermal_database
 from heatautomation.learning import features as thermal_features
 from heatautomation.learning import prediction as thermal_prediction
 from heatautomation.learning import training as thermal_training
+from heatautomation.house.migrate import migrate_database
 
 
 def history(count=900):
@@ -37,8 +38,10 @@ class ThermalLearningTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
+        database_path = Path(self.directory.name) / "history.sqlite3"
+        migrate_database(database_path, backup=False)
         self.database = thermal_database.ThermalDatabase(
-            Path(self.directory.name) / "history.sqlite3")
+            database_path)
         self.addCleanup(self.database.engine.dispose)
         self.model = str(Path(self.directory.name) / "model.joblib")
 

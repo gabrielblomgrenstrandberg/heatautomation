@@ -36,6 +36,8 @@ setup(
         'pandas',
         'scikit-learn',
         'SQLAlchemy',
+        'alembic',
+        'pydantic>=2,<3',
         'joblib',
         'scipy>=1.9; python_version >= "3.8"',
     ],
@@ -44,6 +46,6 @@ setup(
         'License :: OSI Approved :: GNU Affero General Public License v3',
         'Operating System :: OS Independent',
     ],
-    python_requires='>=3.7',
+    python_requires='>=3.9',
     license='AGPL-3.0-or-later',
 )
