@@ -498,19 +498,24 @@ def room_advisory_loop():
                     house, TokenFile(Path.home() / ".heatautomation" / "tado-token.json"))
                 service_hash = digest
             forecast = weather.get_forecast() if config.WEATHER_ENABLED else None
-            outdoor = forecast[0].get("temperature_c") if forecast else None
             equipment_path = config._settings.get(
                 "room_advisory", "equipment_path", fallback="config/room_advisory.json")
+            equipment_error = None
             try:
                 equipment = load_equipment_inputs(equipment_path, datetime.now().astimezone())
             except OSError as error:
                 equipment = None
+                equipment_error = "Equipment input file unavailable"
                 logging.warning("Room advisory equipment inputs unavailable: %s", error)
             except ValueError:
                 equipment = None
+                equipment_error = "Equipment inputs invalid, stale or future-dated"
                 logging.warning("Room advisory equipment inputs are invalid, stale or future-dated.")
             result = run_cycle(
-                database.engine, house, service, outdoor, equipment=equipment,
+                database.engine, house, service, None, equipment=equipment,
+                equipment_error=equipment_error,
+                timezone_name=config.WEATHER_TIMEZONE,
+                outdoor_forecast=forecast,
                 suspect_uncertainty_c=config._number(
                     "room_advisory", "suspect_uncertainty_c", positive=True),
             )

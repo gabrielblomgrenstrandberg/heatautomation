@@ -19,7 +19,8 @@ SCENARIOS = ("low", "nominal", "high")
 
 def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_heat_w,
                       outdoor_c, *, now, freshness_seconds=600,
-                      suspect_uncertainty_c, seconds=900, cost_per_delivered_kwh=None):
+                      suspect_uncertainty_c, seconds=900, cost_per_delivered_kwh=None,
+                      cost_currency=None, outdoor_uncertainty_c=None):
     """Predict a single step from measured temperatures and assumed heat inputs.
 
     All rooms need an explicit other-source mapping; an empty mapping declares
@@ -37,6 +38,11 @@ def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_he
         raise ValueError("Unique rooms are required")
     if not isinstance(outdoor_c, (int, float)) or isinstance(outdoor_c, bool) or not math.isfinite(outdoor_c):
         return {"available": False, "reasons": ["Outdoor temperature unavailable"]}
+    if outdoor_uncertainty_c is not None and (
+            isinstance(outdoor_uncertainty_c, bool)
+            or not isinstance(outdoor_uncertainty_c, (int, float))
+            or not math.isfinite(outdoor_uncertainty_c) or outdoor_uncertainty_c < 0):
+        raise ValueError("Outdoor uncertainty must be nonnegative and finite")
     if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or not math.isfinite(seconds) or not 0 < seconds <= 86400:
         raise ValueError("Prediction duration must be positive and at most 24 hours")
     room_ids = {room.id for room in rooms}
@@ -124,6 +130,10 @@ def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_he
     if any(isinstance(v, bool) or not isinstance(v, (int, float))
            or not math.isfinite(v) or v < 0 for v in costs.values()):
         raise ValueError("Heat costs must be nonnegative and finite")
+    if costs and (not isinstance(cost_currency, str) or len(cost_currency) != 3
+                  or not cost_currency.isascii() or not cost_currency.isalpha()
+                  or not cost_currency.isupper()):
+        raise ValueError("Cost rates require a three-letter uppercase currency")
     predicted = {}
     for scenario in SCENARIOS:
         initial = {}
@@ -144,7 +154,10 @@ def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_he
         remaining = seconds
         while remaining > 0:
             step = min(300, remaining)
-            current_step = simulate_step(current_step, parameters, heat_by_room, outdoor_c, step)
+            weather_margin = outdoor_uncertainty_c if outdoor_uncertainty_c is not None else 0
+            scenario_outdoor = outdoor_c + (
+                -weather_margin if scenario == "low" else weather_margin if scenario == "high" else 0)
+            current_step = simulate_step(current_step, parameters, heat_by_room, scenario_outdoor, step)
             remaining -= step
         predicted[scenario] = current_step
     current = {room.id: usable[room.id].value for room in rooms}
@@ -179,10 +192,12 @@ def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_he
         "created_at": now.isoformat(),
         "inputs": {
             "outdoor_c": outdoor_c, "duration_seconds": seconds,
+            "outdoor_uncertainty_c": outdoor_uncertainty_c,
             "circuit": asdict(circuit) if circuit is not None else None,
             "radiators": [asdict(r) for r in radiators],
             "other_heat_w": other_heat_w, "suspect_uncertainty_c": suspect_uncertainty_c,
             "cost_per_delivered_kwh": costs,
+            "cost_currency": cost_currency,
             "freshness_seconds": freshness_seconds,
             "room_parameters": {r.id: {
                 "capacity_j_per_k": r.capacity_j_per_k, "heat_loss_w_per_k": r.heat_loss_w_per_k,
@@ -203,9 +218,11 @@ def predict_scenarios(rooms, temperatures, demands, circuit, radiators, other_he
                  for name in SCENARIOS}
                 if all(source in costs for source in source_ids
                        + ([circuit.generator_id] if circuit is not None else [])) else None),
+            "estimated_heating_cost_currency": cost_currency,
             "warnings": ["Any heating costs are scenario estimates, not measured consumption."],
         },
-        "assumptions": "Fixed heat and weather for one step; scenarios are not confidence bounds; no commands.",
+        "assumptions": ("Fixed heat and scenario weather for one step; scenarios are not confidence bounds; "
+                        "missing outdoor uncertainty is not quantified; no commands."),
     }
 
 

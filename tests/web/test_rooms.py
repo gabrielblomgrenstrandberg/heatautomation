@@ -65,6 +65,24 @@ class RoomWebTests(unittest.TestCase):
         self.assertIsNone(room["heating_activity"])
         self.assertEqual(self.client.get("/api/rooms/missing/history").status_code, 404)
 
+    def test_suspect_temperature_is_visible_without_claiming_comfort(self):
+        self.login()
+        now = datetime.now(timezone.utc)
+        with self.db.engine.begin() as conn:
+            conn.execute(update(models.room_settings).where(
+                models.room_settings.c.room_id == self.room_id).values(target_c=20))
+            for value, stamp, quality in ((19, now - timedelta(seconds=2), "suspect"),
+                                          (22, now - timedelta(seconds=1), "bad"),
+                                          (23, now + timedelta(hours=1), "good")):
+                conn.execute(insert(models.room_measurements).values(
+                    room_id=self.room_id, quantity="temperature", value=value, unit="C",
+                    observed_at=stamp, received_at=now, quality=quality, classification="measured"))
+        room = next(r for r in self.client.get("/api/house").json()["rooms"] if r["id"] == self.room_id)
+        self.assertEqual(room["temperature_c"], 19)
+        self.assertEqual(room["temperature_quality"], "suspect")
+        self.assertFalse(room["temperature_stale"])
+        self.assertEqual(room["comfort"], "unknown")
+
     def test_override_alignment_conflicts_and_removed_rooms(self):
         self.login()
         settings = f"/api/rooms/{self.room_id}/settings"

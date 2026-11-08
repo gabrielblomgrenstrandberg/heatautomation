@@ -144,7 +144,7 @@ class MeasurementStore:
         return replace(measurement, id=result.inserted_primary_key[0])
 
     def latest(self, room_id, quantity, *, now, freshness_seconds=600,
-               source_integration=None, source_ref=None):
+               source_integration=None, source_ref=None, device_id=None):
         if now.utcoffset() is None:
             raise ValueError("Measurement query time must include a timezone")
         now = now.astimezone(timezone.utc)
@@ -158,6 +158,8 @@ class MeasurementStore:
             query = query.where(models.room_measurements.c.source_integration == source_integration)
         if source_ref is not None:
             query = query.where(models.room_measurements.c.source_ref == source_ref)
+        if device_id is not None:
+            query = query.where(models.room_measurements.c.source_device_id == device_id)
         with self.engine.connect() as conn:
             row = conn.execute(query.order_by(models.room_measurements.c.observed_at.desc(),
                        models.room_measurements.c.id.desc()).limit(1)).first()

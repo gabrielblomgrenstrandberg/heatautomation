@@ -335,6 +335,31 @@ def optimize_rooms(rooms, sources, forecasts, *, solver_seconds=30, max_solver_g
             "intervals": plan}
 
 
+def resolve_room_target(room_id, setting, schedules, overrides, instant, zone):
+    """Resolve the target in force at an instant without dispatching commands."""
+    if instant.utcoffset() is None:
+        raise ValueError("Target time requires a timezone")
+    current = instant.astimezone(timezone.utc)
+    local = current.astimezone(zone)
+    minute = local.hour * 60 + local.minute
+    matches = [s for s in schedules if s.weekday == local.weekday()
+               and s.start_min <= minute < s.end_min]
+    if len(matches) > 1:
+        raise PlanningUnavailable("Overlapping room schedules for %s" % room_id)
+    target = matches[0].target_c if matches else setting.target_c
+    active = []
+    for override in overrides:
+        begin = (override.starts_at.replace(tzinfo=timezone.utc) if override.starts_at.tzinfo is None
+                 else override.starts_at.astimezone(timezone.utc))
+        end = (override.expires_at.replace(tzinfo=timezone.utc) if override.expires_at.tzinfo is None
+               else override.expires_at.astimezone(timezone.utc))
+        if begin <= current < end:
+            active.append(override)
+    if len(active) > 1:
+        raise PlanningUnavailable("Overlapping room overrides for %s" % room_id)
+    return active[0].target_c if active else target
+
+
 def rooms_from_database(engine, forecasts, readings, sources, *, timezone_name):
     """Resolve room targets and validated physical assignments from the house database.
 
@@ -411,24 +436,14 @@ def rooms_from_database(engine, forecasts, readings, sources, *, timezone_name):
         targets = []
         for forecast in forecasts:
             current = forecast.start.astimezone(timezone.utc)
-            local = current.astimezone(zone)
-            minute = local.hour * 60 + local.minute
-            matches = [s for s in room_schedules
-                       if s.weekday == local.weekday() and s.start_min <= minute < s.end_min]
-            if len(matches) > 1:
-                raise PlanningUnavailable("Overlapping room schedules for %s" % room_id)
-            target = matches[0].target_c if matches else setting.target_c
-            active = []
             for override in room_overrides:
                 begin = override.starts_at.replace(tzinfo=timezone.utc) if override.starts_at.tzinfo is None else override.starts_at.astimezone(timezone.utc)
                 end = override.expires_at.replace(tzinfo=timezone.utc) if override.expires_at.tzinfo is None else override.expires_at.astimezone(timezone.utc)
                 if begin < current + timedelta(seconds=INTERVAL_SECONDS) and end > current:
                     if begin > current or end < current + timedelta(seconds=INTERVAL_SECONDS):
                         raise PlanningUnavailable("Override boundary falls inside a planning interval")
-                    active.append(override)
-            if len(active) > 1:
-                raise PlanningUnavailable("Overlapping room overrides for %s" % room_id)
-            targets.append(active[0].target_c if active else target)
+            targets.append(resolve_room_target(room_id, setting, room_schedules,
+                                               room_overrides, current, zone))
         rooms.append(Room(room_id, reading.get("value"), par["capacity_j_per_k"],
                           par["ua_w_per_k"], par["conductances_w_per_k"],
                           setting.min_c, setting.max_c, targets, uncertainty, floors[room_id],

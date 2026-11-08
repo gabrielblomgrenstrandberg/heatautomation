@@ -47,7 +47,7 @@ estimated or measured scenarios; an empty mapping is an explicit declaration
 that a room has no other sources. Unknown sources must not be represented by
 empty mappings. The result is a one-step conditional prediction, not a
 thermostat command or an optimized achievable allocation. Cost remains
-unknown without a verified generator energy model.
+unknown without independently supplied cost rates per unit of delivered heat.
 
 The worker resolves rooms, radiator identities and required direct heat paths
 from the reconciled house, then reads optional independently supplied equipment
@@ -56,6 +56,8 @@ existing optimizer tables under a separate `advisory` mode; unavailable results
 are recorded too. Authenticated `GET /api/room-advisory` returns the latest
 result. The worker does not infer a live SPRSUN output from its name or Tado
 demand, or infer direct heat from a device being enabled.
+The room dashboard displays the latest advisory, its age, conditional
+low/nominal/high values and any unavailability or connection warnings.
 
 To opt in, migrate the database, create and reconcile a real house
 configuration, authorize Tado, configure mapped rooms and targets, and set
@@ -69,13 +71,40 @@ must carry a timezone-aware observation time, `measured` or `estimated`
 classification and provenance. Supply **every configured direct heat source**
 and one shared radiator generator with independently supported state, capacity,
 water temperatures, radiator ratings and delivery-factor assumptions. Cost
-rates are optional costs per kWh *delivered heat*, in the same currency;
+rates are optional costs per kWh *delivered heat*, with a three-letter
+`cost_currency` (for example `SEK`) shared by all rates;
 missing rates produce an unknown cost. The outdoor value is the first weather
-forecast entry, not a measured outdoor temperature. Missing inputs or any
+forecast for the decision time, not a measured outdoor temperature; missing,
+duplicate, or timezone-ambiguous coverage is rejected. Missing inputs or any
 unknown room temperature prevent a house prediction.
+An optional `outdoor_uncertainty_c` in the equipment snapshot shifts outdoor
+temperature down and up for the low and high scenarios. It is an assumption
+supplied by the producer, not a calibrated confidence interval. When omitted,
+weather uncertainty is unquantified, not zero uncertainty.
+The reported target is the current room schedule or override in the configured
+weather timezone, falling back to the base target. It is not a forecast of
+future target changes during the prediction step.
 
-The worker currently supports one water circuit and mapped Tado room sensors;
+For a room without a mapped Tado zone, a trusted snapshot producer can provide
+`room_temperatures` keyed by room ID with `device_id`, `value_c`, `quality`
+(`good` or `suspect`), `classification` (`measured`) and `connection_method`
+(`CLOUD`, `LOCAL_HTTP`, `LOCAL_HTTPS` or `UNKNOWN`). The sensor must be
+assigned to that room and declare `read_temperature`. These supplied values
+share the snapshot timestamp and provenance; the application does not verify
+the producer's measurement claims. They are stored in the unified measurement
+table and remain available until stale. Multiple current sensors in one room
+are rejected rather than selected arbitrarily. Mapped Tado rooms continue to
+use their zone observations, not the snapshot.
+
+The worker currently supports one water circuit and mapped Tado room sensors
+or explicitly supplied measurements from configured room sensors;
 it has no direct SPRSUN telemetry or automatic source-delivery estimator.
+When LAN discovery is enabled, a configured Mill sensor with `read_temperature`
+and a matching stable `mill:` external ID also consumes the discovery worker's
+read-only, timestamped ambient-temperature observation. Unsupported or absent
+fields remain unknown; polling failure does not erase the last valid value,
+and connection warnings remain separate from measurement freshness. This does
+not assume that a Mill outlet includes a temperature sensor.
 Its equipment snapshot must be supplied by a trusted external measurement or
 estimation process, and individual inputs share one timestamp and provenance.
 It does not automatically estimate confidence from water conditions, vary

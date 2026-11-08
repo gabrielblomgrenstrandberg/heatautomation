@@ -179,8 +179,13 @@ The multi-room implementation is being introduced incrementally. The current
 code adds validated physical configuration, additive Alembic migrations,
 idempotent SQL reconciliation, a room-level thermal model, a Tado Classic
 service, and a guarded command interface. Device polling, automatic room
-control, and the multi-room optimizer are not wired into the controller. A
-standalone Mill Gen 3 integration is also available.
+control, and the multi-room optimizer are not generally wired into the
+controller. An optional, separate read-only room advisory worker polls mapped
+Tado zones and produces conditional scenarios when current physical inputs are
+available. It does not dispatch device commands or replace the single-zone
+MPC. See [multi-room architecture](docs/multi-room-architecture.md) for setup,
+the authenticated advisory endpoint, required equipment snapshots, and
+limitations. A standalone Mill Gen 3 integration is also available.
 
 Copy `config/house.example.json` to `config/house.json`, replace placeholder
 thermal values with verified physical data, and keep the real file local; it is

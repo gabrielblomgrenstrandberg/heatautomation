@@ -5,7 +5,7 @@ import RoomSchedules from "./RoomSchedules";
 type Device = { id: string; name: string; adapter: string | null; connectivity: string };
 type Room = {
   id: string; floor_id: string; name: string; temperature_c: number | null;
-  temperature_stale: boolean; target_c: number | null; base_target_c: number | null;
+  temperature_stale: boolean; temperature_quality: string; target_c: number | null; base_target_c: number | null;
   min_c: number | null; max_c: number | null; predicted_c: number | null;
   max_preheat_c: number | null;
   prediction_at: string | null;
@@ -33,6 +33,15 @@ type Plan = { created_at: string; intervals: { room_id: string; start: string; d
   selected_sources: string[]; expected_cost: number; explanation: string;
   planned_heat_kw: Record<string, number>; inter_room_transfer_kw: Record<string, number>;
 } }[] };
+type Scenario = { low: number; nominal: number; high: number };
+type Advisory = {
+  available: boolean; created_at: string; model_version: string; reasons: string[];
+  connection_warnings?: string[];
+  rooms?: { room_id: string; current_temperature_c: number; temperature_quality: string;
+    target_c: number; estimated_radiator_w: Scenario; estimated_other_heat_w: Scenario;
+    predicted_temperature_c: Scenario }[];
+  house?: { estimated_heating_cost: Scenario | null; estimated_heating_cost_currency: string | null };
+};
 
 function show(value: number | null | undefined, unit = "°C") {
   return value == null ? "Unknown" : `${value.toFixed(1)} ${unit}`;
@@ -123,6 +132,8 @@ export default function Rooms({ house, error }: { house: HouseData | null; error
   const [selected, setSelected] = useState("");
   const [history, setHistory] = useState<History | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
+  const [advisory, setAdvisory] = useState<Advisory | null>(null);
+  const [advisoryError, setAdvisoryError] = useState("");
   const [message, setMessage] = useState("");
   const [target, setTarget] = useState("");
   const [minimum, setMinimum] = useState("");
@@ -159,6 +170,17 @@ export default function Rooms({ house, error }: { house: HouseData | null; error
     const timer = setInterval(refresh, 30000);
     return () => { active = false; clearInterval(timer); };
   }, []);
+  useEffect(() => {
+    let active = true;
+    const refresh = () => api("/api/room-advisory").then(data => {
+      if (active) { setAdvisory(data); setAdvisoryError(""); }
+    }).catch(reason => {
+      if (active) { setAdvisory(null); setAdvisoryError(reason.message); }
+    });
+    refresh();
+    const timer = setInterval(refresh, 30000);
+    return () => { active = false; clearInterval(timer); };
+  }, []);
   async function save(event: React.FormEvent, temporary: boolean) {
     event.preventDefault();
     if (!room) return;
@@ -185,6 +207,23 @@ export default function Rooms({ house, error }: { house: HouseData | null; error
       <p className="mt-2 text-sm text-stone-500">Room values and plans are observations or estimates, not proof of delivered heat.</p></div>
     {error && <div className="alert" role="alert">{error}</div>}
     {!house ? <div className="panel p-6">Room data unavailable. Reconcile the house configuration and apply migrations.</div> : <>
+      <section className="panel p-5">
+        <h3 className="font-semibold">Read-only room advisory</h3>
+        <p className="mt-1 text-xs text-stone-500">Conditional scenarios, not commands or confidence bounds. Heat and weather assumptions remain fixed for one step.</p>
+        {advisoryError ? <p className="mt-2 text-sm" role="alert">Advisory unavailable: {advisoryError}</p> :
+          !advisory ? <p className="mt-2 text-sm text-stone-500">No advisory recorded. The worker is optional.</p> : <>
+            <p className="mt-2 text-xs text-stone-500">Recorded {new Date(advisory.created_at).toLocaleString()} · {advisory.model_version}
+              {(!Number.isFinite(Date.parse(advisory.created_at)) || now - Date.parse(advisory.created_at) > 600000 || now < Date.parse(advisory.created_at)) ? " · Historical or stale" : ""}</p>
+            {!advisory.available && <div className="mt-2 text-sm">Prediction unavailable: {advisory.reasons.join("; ")}</div>}
+            {(advisory.connection_warnings || []).map((warning, index) => <p key={index} className="mt-1 text-xs text-amber-700">{warning}</p>)}
+            {advisory.available && advisory.rooms?.map(item => <div key={item.room_id} className="mt-3 border-t border-stone-200 pt-2 text-sm dark:border-white/10">
+              <strong>{names.get(item.room_id) || item.room_id}</strong>: measured {show(item.current_temperature_c)} ({item.temperature_quality}), target {show(item.target_c)}.
+              Predicted low / nominal / high: {show(item.predicted_temperature_c.low)} / {show(item.predicted_temperature_c.nominal)} / {show(item.predicted_temperature_c.high)}.
+              <div className="text-xs text-stone-500">Nominal estimated radiator {show(item.estimated_radiator_w.nominal, "W")} · other heat {show(item.estimated_other_heat_w.nominal, "W")}</div>
+            </div>)}
+            {advisory.available && advisory.house?.estimated_heating_cost && <p className="mt-2 text-xs text-stone-500">Estimated nominal cost: {show(advisory.house.estimated_heating_cost.nominal, advisory.house.estimated_heating_cost_currency || "")}</p>}
+          </>}
+      </section>
       <div className="flex flex-wrap gap-2" aria-label="Floor selector">{house.floors.map(item =>
         <button key={item.id} className={floor === item.id ? "primary-button" : "status-pill"} onClick={() => { setFloor(item.id); setSelected(""); }}>{item.name}</button>)}</div>
       {!house.floors.length && <div className="panel p-6">No floors configured.</div>}
@@ -199,7 +238,7 @@ export default function Rooms({ house, error }: { house: HouseData | null; error
             <div className="mt-2 text-xs text-stone-500">Demand unknown · Activity unknown · Active source unknown</div>
             {planned && <div className="mt-2 text-xs text-stone-500">Simulation: demand {show(planned.data.heating_demand_kw, "kW")} · planned sources {planned.data.selected_sources.map(id => item.sources.find(s => s.id === id)?.name || id).join(", ") || "none"}</div>}
             {item.heat_inputs && <div className="mt-2 text-xs text-stone-500">Heat inputs at {new Date(item.heat_inputs.observed_at).toLocaleTimeString()}: {item.heat_inputs.sources.map(source => `${item.sources.find(s => s.id === source.id)?.name || source.id} ${show(source.watts, "W")} (${source.classification})`).join(", ")}</div>}
-            <div className="mt-2 text-xs text-stone-500">Connection: {item.devices.map(d => `${d.name}: ${d.connectivity}`).join(", ") || "unknown"}{item.temperature_stale ? " · Temperature stale" : ""}</div>
+            <div className="mt-2 text-xs text-stone-500">Connection: {item.devices.map(d => `${d.name}: ${d.connectivity}`).join(", ") || "unknown"} · Temperature quality: {item.temperature_quality}{item.temperature_stale ? " (stale)" : ""}</div>
           </button>;
         })}
       </div>

@@ -2,6 +2,7 @@
   "observed_at": "2020-01-01T00:00:00Z",
   "classification": "estimated",
   "provenance": "EXAMPLE ONLY - replace using current independently verified data",
+  "room_temperatures": {},
   "circuit": {
     "generator_id": "0eb76129-21c5-4e28-a5bd-264c9382c61c",
     "generator_available": true,

@@ -17,6 +17,9 @@
 # module: weather.py - Weather forecasts for the configured location.
 
 import logging
+import math
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -25,6 +28,39 @@ from ..config import WEATHER_LATITUDE, WEATHER_LONGITUDE, WEATHER_TIMEZONE, FORE
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+
+
+def current_forecast(forecast, now, timezone_name):
+    """Return the uniquely matching hourly forecast, rejecting ambiguous times."""
+    if now.utcoffset() is None:
+        raise ValueError("Forecast selection requires a timezone-aware time")
+    zone = ZoneInfo(timezone_name)
+    matches = []
+    for item in forecast or []:
+        try:
+            stamp = datetime.fromisoformat(item["time"].replace("Z", "+00:00"))
+            if stamp.utcoffset() is None:
+                options = {stamp.replace(tzinfo=zone, fold=fold).astimezone(timezone.utc)
+                           for fold in (0, 1)}
+                valid = [point for point in options
+                         if point.astimezone(zone).replace(tzinfo=None) == stamp]
+                if len(valid) != 1:
+                    continue
+                stamp = valid[0]
+            else:
+                stamp = stamp.astimezone(timezone.utc)
+            temperature = item["temperature_c"]
+            if (isinstance(temperature, bool) or not isinstance(temperature, (int, float))
+                    or not math.isfinite(temperature)):
+                continue
+            if stamp <= now.astimezone(timezone.utc) < stamp + timedelta(hours=1):
+                matches.append({"temperature_c": temperature, "starts_at": stamp.isoformat(),
+                                "classification": "predicted", "source": "open-meteo"})
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+    return matches[0] if len(matches) == 1 else None
+
+
 def get_forecast():
     """Fetch the configured number of hourly weather forecasts.
 

@@ -82,8 +82,11 @@ def read_house(database_path):
                 & (models.room_measurements.c.quantity == "temperature")
                 & (models.room_measurements.c.unit == "C")
                 & (models.room_measurements.c.classification == "measured")
+                & models.room_measurements.c.quality.in_(("good", "suspect"))
+                & (models.room_measurements.c.observed_at <= now)
+                & (models.room_measurements.c.received_at <= now)
             ).order_by(models.room_measurements.c.observed_at.desc()).limit(1)).first()
-            fresh = bool(measurement and measurement.quality == "good"
+            fresh = bool(measurement
                          and 0 <= (now - _utc(measurement.observed_at)).total_seconds() <= 900)
             override = next((o for o in overrides if o.room_id == room.id
                              and _utc(o.starts_at) <= now < _utc(o.expires_at)), None)
@@ -107,7 +110,7 @@ def read_house(database_path):
                     assignments.append({"id": generator.id, "name": generator.name,
                                         "type": path.path_type})
             state = "unknown"
-            if fresh and target is not None:
+            if fresh and measurement.quality == "good" and target is not None:
                 state = "cold" if measurement.value < target - 0.5 else (
                     "warm" if measurement.value > target + 0.5 else "comfortable")
             result.append({
