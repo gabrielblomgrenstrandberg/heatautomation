@@ -150,11 +150,19 @@ class ThermalDatabase:
         with self.engine.begin() as connection:
             for plan in connection.execute(select(plans).where(
                     plans.c.created_at >= cutoff)).fetchall():
+                from .profile import compatible
+                plan_settings = json.loads(plan.settings_json)
+                plan_profile = plan_settings.get("thermal_profile", {
+                    "indoor_source": "sensibo", "tado_room_id": "",
+                    "tado_zone": "",
+                    "heatpump_absent": False, "pelletstove_absent": False,
+                    "other_heating_absent": False,
+                })
                 steps = [json.loads(row.data_json) for row in connection.execute(
                     select(plan_intervals).where(plan_intervals.c.plan_id == plan.id)
                     .order_by(plan_intervals.c.start)
                 )]
-                score = evaluate(steps, history)
+                score = evaluate(steps, [row for row in history if compatible(row, plan_profile)])
                 if not score:
                     continue
                 values = {

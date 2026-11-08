@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from .. import config
 from ..integrations import kmp, sensibo, tibber, weather
+from . import profile
 
 
 def _number(value):
@@ -19,8 +20,9 @@ def _number(value):
     return number if math.isfinite(number) else None
 
 
-def collect(database, pump_capacity):
+def collect(database, pump_capacity, tado_service=None, selected_profile=None):
     start = time.monotonic()
+    settings = selected_profile if selected_profile is not None else profile.current()
     forecast = weather.get_forecast() if config.WEATHER_ENABLED else None
     outdoor = _number(forecast[0].get("temperature_c")) if forecast else None
     price = _number(tibber.get_spot_price()) if config.TIBBER_ENABLED and config.TIBBER_API_KEY else None
@@ -55,6 +57,11 @@ def collect(database, pump_capacity):
     else:
         stove_kw = None
 
+    if settings["heatpump_absent"]:
+        pump_on, pump_mode, pump_kw = False, "absent", 0.0
+    if settings["pelletstove_absent"]:
+        stove_on, stove_mode, stove_kw = False, "absent", 0.0
+
     if time.monotonic() - start > 120:
         logging.warning("Thermal observation took over two minutes; device capacities are unknown.")
         pump_kw = stove_kw = None
@@ -64,9 +71,34 @@ def collect(database, pump_capacity):
         "outdoor_c": outdoor,
         "price_sek_kwh": price,
         "target_c": _number(state.get("targetTemperature")),
+        "thermal_profile": profile.marker(settings),
     }
+    if settings["indoor_source"] == "tado":
+        sensor_values["indoor_c"] = None
+        sensor_values["indoor_humidity_percent"] = None
+        sensor_values["target_c"] = None
+        if tado_service is not None and config.TADO_ENABLED:
+            from ..integrations.tado import TadoError
+            try:
+                status = tado_service.get_room_status(settings["tado_room_id"])
+                reading = status["temperature_reading"]
+                observed = datetime.fromisoformat(reading["timestamp"].replace("Z", "+00:00"))
+                age = (datetime.now(timezone.utc) - observed).total_seconds()
+                zone = "{}:{}".format(status["home_id"], status["zone_id"])
+                if (observed.utcoffset() is not None and 0 <= age <= 600
+                        and status["connection"] == "ONLINE" and zone == settings["tado_zone"]):
+                    sensor_values["indoor_c"] = _number(reading["value"])
+                    sensor_values["target_c"] = _number(status["requested_temperature_c"])
+                else:
+                    logging.warning("Tado room temperature is stale, offline or from the wrong zone.")
+            except TadoError as error:
+                logging.warning("Tado room temperature unavailable: %s", error)
+            except (KeyError, TypeError, ValueError):
+                logging.warning("Tado room temperature is unavailable or has no valid timestamp.")
+        else:
+            logging.warning("Tado temperature source is not configured or available.")
     expected = []
-    if config.SENSIBO_ENABLED:
+    if (settings["indoor_source"] == "sensibo" and config.SENSIBO_ENABLED) or settings["indoor_source"] == "tado":
         expected.append("indoor_c")
     if config.WEATHER_ENABLED:
         expected.append("outdoor_c")

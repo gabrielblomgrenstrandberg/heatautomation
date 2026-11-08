@@ -10,6 +10,7 @@ import pandas as pd
 from .. import config
 from ..integrations import tibber, weather
 from ..learning.prediction import ThermalPredictor
+from ..learning import profile
 from . import heating_model
 from .mpc import Interval, PlanningUnavailable, Settings, optimize
 from .mpc_simulation import compare_no_preheat
@@ -75,9 +76,19 @@ def build_intervals(prices, forecast, start, pump_capacity):
 
 
 def run_shadow_cycle(database, pump_capacity, now=None):
-    if not all((config.SENSIBO_ENABLED, config.KMP_ENABLED,
-                config.TIBBER_ENABLED, config.WEATHER_ENABLED)):
-        raise PlanningUnavailable("Shadow MPC requires Sensibo, KMP, Tibber and weather integrations")
+    settings_profile = profile.current()
+    if not config.TIBBER_ENABLED or not config.WEATHER_ENABLED:
+        raise PlanningUnavailable("Shadow MPC requires Tibber and weather forecasts")
+    if settings_profile["indoor_source"] == "sensibo" and not config.SENSIBO_ENABLED:
+        raise PlanningUnavailable("Shadow MPC indoor source Sensibo is disabled")
+    if settings_profile["indoor_source"] == "tado" and not config.TADO_ENABLED:
+        raise PlanningUnavailable("Shadow MPC indoor source Tado is disabled")
+    if settings_profile["indoor_source"] == "tado" and not settings_profile["other_heating_absent"]:
+        raise PlanningUnavailable("Tado radiator heating is not modeled; confirm other heating is absent before planning")
+    if not config.SENSIBO_ENABLED and not settings_profile["heatpump_absent"]:
+        raise PlanningUnavailable("Heat pump state unavailable: enable Sensibo or explicitly declare it absent")
+    if not config.KMP_ENABLED and not settings_profile["pelletstove_absent"]:
+        raise PlanningUnavailable("Pellet stove state unavailable: enable KMP or explicitly declare it absent")
     now = now or datetime.now(timezone.utc)
     history = database.history()
     if len(history) < 7:
@@ -86,6 +97,8 @@ def run_shadow_cycle(database, pump_capacity, now=None):
             .format(len(history))
         )
     recent = history[-7:]
+    if any(not profile.compatible(row, settings_profile) for row in recent):
+        raise PlanningUnavailable("Recent observations do not match the selected thermal profile")
     timestamps = [datetime.fromisoformat(row["timestamp"]) for row in recent]
     problems = []
     naive = [index for index, timestamp in enumerate(timestamps, 1)
@@ -137,18 +150,26 @@ def run_shadow_cycle(database, pump_capacity, now=None):
     if (type(pump_on) is not bool or type(stove_on) is not bool
             or (pump_on and latest.get("heatpump_mode") != "heat")
             or (stove_on and latest.get("pelletstove_mode") not in {"HÖGEFFEKT", "VILAR..."})
-            or (not stove_on and latest.get("pelletstove_mode") != "AV")):
+            or (not stove_on and latest.get("pelletstove_mode") not in {"AV", "absent"})):
         raise PlanningUnavailable("Device status is unknown or transitioning")
     settings = _settings()
     model = ThermalPredictor(config.THERMAL_MODEL_PATH)
+    model_profile = model.artifact.get("thermal_profile")
+    if model_profile != settings_profile and not (model_profile is None and profile.legacy(settings_profile)):
+        raise PlanningUnavailable("Thermal model does not match the selected indoor source and heating configuration")
     prices = tibber.get_price_forecast()
     forecast = weather.get_forecast()
     start = now.astimezone(timezone.utc).replace(second=0, microsecond=0)
     start += timedelta(minutes=15 - start.minute % 15)
-    intervals = build_intervals(prices, forecast, start, pump_capacity)
+    intervals = build_intervals(prices, forecast, start,
+                                (lambda _: 0.0) if settings_profile["heatpump_absent"] else pump_capacity)
+    if settings_profile["pelletstove_absent"]:
+        from dataclasses import replace
+        intervals = [replace(step, stove_capacity_kw=0.0) for step in intervals]
     plan = optimize(intervals, indoor, {"heatpump": pump_on, "pelletstove": stove_on},
                     model, settings)
     metadata = asdict(settings)
+    metadata["thermal_profile"] = settings_profile
     try:
         metadata["modeled_comparison"] = compare_no_preheat(
             intervals, indoor, {"heatpump": pump_on, "pelletstove": stove_on},

@@ -104,7 +104,8 @@ class IntegrationSelectionTests(unittest.TestCase):
             for mocked in (pump, stove, price, forecast):
                 mocked.assert_not_called()
             sensors, sources = database.save.call_args.args[1:]
-            self.assertTrue(all(value is None for value in sensors.values()))
+            self.assertTrue(all(value is None for name, value in sensors.items()
+                                if name != "thermal_profile"))
             self.assertTrue(all(value is None for source in sources.values()
                                 for value in source.values()))
 

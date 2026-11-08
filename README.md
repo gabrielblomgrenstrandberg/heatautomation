@@ -26,10 +26,12 @@ Values must be true or false. Defaults are enabled to preserve existing setups.
 
 Disabled integrations are not polled or commanded by the controller or
 thermal collector; their measurements remain unknown, not zero or off.
-Automatic source switching and shadow MPC are paused unless all four are
-enabled, because the existing two-source controller cannot safely infer the
-state or capacity of an absent source. Enabled devices continue read-only
-monitoring, including in test mode. `tado = false` also blocks calls to the
+Automatic source switching is paused unless Sensibo, KMP, Tibber and weather
+are enabled. Shadow MPC can instead use a mapped Tado room for temperature
+and explicitly declared absent heat-pump or pellet-stove sources, as described
+below. A disabled integration alone does not establish that its equipment is
+absent. Enabled devices continue read-only monitoring, including in test mode.
+`tado = false` also blocks calls to the
 standalone Tado service, including cached reads, authentication and simulated
 or real commands. Enabling Tado permits use of that service but does not start
 it, configure credentials, or enable automatic control. Tado is not required
@@ -687,6 +689,30 @@ until then. Seven consecutive, recent indoor readings and known stable device
 statuses are required. Provider failure, missing data, infeasible constraints,
 or insufficient model quality are logged; no substitute plan or control
 action is generated.
+
+To use Tado instead of Sensibo as the indoor sensor, set `indoor_source = tado`
+in `[mpc]` and `tado_room_id` to the UUID of one mapped room in `config/house.json`
+(or the path in `HEATAUTOMATION_HOUSE_CONFIG`). Complete Tado device
+authorization first using the default token file described above. The
+collector requires an online room and a provider temperature timestamp no
+older than ten minutes. It uses the same room throughout the history; changing
+rooms or source configuration requires a separately learned model and fresh
+observations.
+
+If a heat pump or pellet stove is physically absent or cannot operate, disable
+its integration and explicitly set `[mpc] heatpump_absent = true` or
+`pelletstove_absent = true`, respectively. Do not mark an installed,
+unmonitored source absent. If its integration is disabled without that
+declaration, planning remains unavailable. Disabled sources are excluded
+from the optimizer; declaration does not send commands. This planner models
+only the legacy heat pump and pellet stove. Tado is used **only as a
+temperature sensor**, not as a radiator or heat-source model. If Tado controls
+additional heating, that heat is not represented and plans are not reliable;
+do not use this planner for that installation. To enable Tado-sensor plans,
+set `[mpc] other_heating_absent = true` only after confirming that no other
+heating source can operate. Tibber and weather forecasts
+are still required. Model training needs sufficient completed cycles for the
+selected sources, so planning can remain unavailable while history accumulates.
 
 Before enabling, configure the comfort limits, nominal target, uncertainty
 margin, electricity extra cost (SEK/kWh, in addition to Tibber `total`),

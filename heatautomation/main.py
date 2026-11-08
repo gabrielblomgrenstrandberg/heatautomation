@@ -18,6 +18,7 @@
 
 import time
 import threading
+import os
 from datetime import datetime, timedelta
 import logging
 
@@ -475,10 +476,13 @@ def thermal_monitor_loop():
         from .learning import collection as thermal_collection
         from .learning import database as thermal_database
         from .learning import training as thermal_training
+        from .learning import profile as thermal_profile
     except ImportError:
         logging.exception("Thermal monitoring unavailable: dependency import failed.")
         return
     database = None
+    tado_service = None
+    tado_service_profile = None
     next_poll = time.monotonic()
     next_training = next_poll
     while True:
@@ -488,9 +492,28 @@ def thermal_monitor_loop():
         try:
             if database is None:
                 database = thermal_database.ThermalDatabase(config.THERMAL_DATABASE_PATH)
-            thermal_collection.collect(database, get_effective_heating_capacity)
+            selected_profile = thermal_profile.current()
+            if tado_service is not None and selected_profile != tado_service_profile:
+                tado_service.close()
+                tado_service = None
+            if (selected_profile["indoor_source"] == "tado" and config.TADO_ENABLED
+                    and tado_service is None):
+                from pathlib import Path
+                from .house.config import load_house_config
+                from .integrations.tado import TadoService, TokenFile
+                house_path = os.environ.get("HEATAUTOMATION_HOUSE_CONFIG", "config/house.json")
+                try:
+                    house = load_house_config(house_path)
+                    tado_service = TadoService(
+                        house, TokenFile(Path.home() / ".heatautomation" / "tado-token.json")
+                    )
+                    tado_service_profile = selected_profile
+                except (OSError, ValueError):
+                    logging.warning("Tado thermal monitoring requires a valid house configuration.")
+            thermal_collection.collect(database, get_effective_heating_capacity, tado_service,
+                                       selected_profile)
             if time.monotonic() >= next_training:
-                thermal_training.train(database, config.THERMAL_MODEL_PATH)
+                thermal_training.train(database, config.THERMAL_MODEL_PATH, selected_profile)
                 next_training = time.monotonic() + 3600
             if config.MPC_ENABLED:
                 from .control.mpc_monitor import run_shadow_cycle

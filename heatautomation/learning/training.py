@@ -16,8 +16,13 @@ from .features import FEATURES, training_rows
 MIN_ROWS = 120
 
 
-def train(database, model_path):
-    rows = training_rows(database.history())
+def train(database, model_path, thermal_profile=None):
+    history = database.history()
+    if thermal_profile is not None:
+        from .profile import compatible
+        history = [record if compatible(record, thermal_profile)
+                   else dict(record, indoor_c=None) for record in history]
+    rows = training_rows(history)
     models, metrics, support = {}, {}, {}
     for regime in ("cooling", "heating"):
         data = rows[rows["regime"] == regime]
@@ -52,6 +57,8 @@ def train(database, model_path):
         return False
     artifact = {"version": 1, "created_at": datetime.now(timezone.utc).isoformat(),
                 "features": FEATURES, "models": models, "metrics": metrics, "support": support}
+    if thermal_profile is not None:
+        artifact["thermal_profile"] = thermal_profile
     directory = os.path.dirname(os.path.abspath(model_path))
     temporary = None
     try:
