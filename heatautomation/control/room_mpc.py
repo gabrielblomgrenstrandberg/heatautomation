@@ -35,6 +35,7 @@ class Room:
     targets_c: Sequence[float]
     uncertainty_c: float
     floor_id: Optional[str] = None
+    max_preheat_c: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -88,10 +89,12 @@ def _validate(rooms, sources, forecasts, solver_seconds):
     for room in rooms:
         for value, name in ((room.initial_c, "initial temperature"), (room.capacity_j_per_k, "capacity"),
                             (room.heat_loss_w_per_k, "heat loss"), (room.minimum_c, "minimum"),
-                            (room.maximum_c, "maximum"), (room.uncertainty_c, "uncertainty")):
+                            (room.maximum_c, "maximum"), (room.uncertainty_c, "uncertainty"),
+                            (room.max_preheat_c, "maximum preheating")):
             _real(value, name)
         if (not -30 <= room.initial_c <= 60 or room.capacity_j_per_k <= 0
                 or room.heat_loss_w_per_k < 0 or room.uncertainty_c < 0
+                or not 0 <= room.max_preheat_c <= 2
                 or not -30 <= room.minimum_c <= room.maximum_c <= 60
                 or len(room.targets_c) != INTERVAL_COUNT):
             raise ValueError("Invalid room parameters, comfort bounds or targets")
@@ -99,7 +102,7 @@ def _validate(rooms, sources, forecasts, solver_seconds):
             _real(target, "target")
             if not room.minimum_c <= target <= room.maximum_c:
                 raise ValueError("Room target must be within its comfort limits")
-            if target + room.uncertainty_c > min(room.maximum_c, target + 2) - room.uncertainty_c:
+            if target + room.uncertainty_c > min(room.maximum_c, target + room.max_preheat_c) - room.uncertainty_c:
                 raise ValueError("Room uncertainty leaves no feasible comfort band")
         for neighbor, value in room.conductances_w_per_k.items():
             _real(value, "conductance")
@@ -234,7 +237,7 @@ def optimize_rooms(rooms, sources, forecasts, *, solver_seconds=30, max_solver_g
         for t in range(n):
             target = room.targets_c[t]
             lower = max(room.minimum_c, target) + room.uncertainty_c
-            upper = min(room.maximum_c, target + 2) - room.uncertainty_c
+            upper = min(room.maximum_c, target + room.max_preheat_c) - room.uncertainty_c
             temperatures[room.id].append(p.var(lower, upper))
     for source in sources:
         if source.kind != "radiator":
@@ -428,7 +431,8 @@ def rooms_from_database(engine, forecasts, readings, sources, *, timezone_name):
             targets.append(active[0].target_c if active else target)
         rooms.append(Room(room_id, reading.get("value"), par["capacity_j_per_k"],
                           par["ua_w_per_k"], par["conductances_w_per_k"],
-                          setting.min_c, setting.max_c, targets, uncertainty, floors[room_id]))
+                          setting.min_c, setting.max_c, targets, uncertainty, floors[room_id],
+                          setting.max_preheat_c))
     return rooms
 
 

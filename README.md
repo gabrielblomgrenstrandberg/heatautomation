@@ -84,12 +84,21 @@ configuration. It displays measured temperatures, configured heat paths and
 thermal links, stored prediction comparisons, and saved simulation-only room
 plans. Room schedules are not resolved in the overview, so their effective
 target is shown as unknown unless an override is active. Room targets and
-limits are saved in SQL, not dispatched to devices. Overrides start at the
+limits, per-room maximum preheating (0–2 °C) and weekly schedules are saved in
+SQL, not dispatched to devices. Preheating affects new simulation plans only.
+Overrides start at the
 next 15-minute boundary and durations round up to 15-minute intervals; an
-overlapping future override is rejected. Physical configuration, mappings,
-automatic control, optimization settings, and complete historical series are
-not yet managed by the GUI. Missing measurements and actual heat delivery
-remain unknown.
+overlapping future override is rejected. The configuration editor validates
+`config/house.json`, saves it atomically, and applies it to SQL as a separate
+operation. Set `HEATAUTOMATION_HOUSE_CONFIG` for a different file; the file
+must already exist. A revision prevents stale saves within this web process.
+Do not edit the file concurrently from another process. If applying fails or
+the process stops after saving, retry the explicit apply; no automatic recovery
+is implied. Reconciliation preserves learned values and historical data.
+Automatic control and complete historical series are
+not yet managed by the GUI. Missing measurements and actual heat delivery remain unknown.
+The base-target history starts with web changes after migration; it is not an
+effective-target history and does not reconstruct past schedule or override values.
 
 For frontend development, disable automatic web startup, run the web server
 separately with `python -m uvicorn heatautomation.web.app:create_app --factory

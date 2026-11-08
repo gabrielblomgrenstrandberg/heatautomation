@@ -26,7 +26,7 @@ def _read(path):
     try:
         content = Path(path).read_bytes()
         if len(content) > 1024 * 1024:
-            raise ValueError("House configuration exceeds one megabyte")
+            raise StatusUnavailable("House configuration exceeds one megabyte.")
         config = HouseConfig.model_validate_json(content)
         return config, hashlib.sha256(content).hexdigest()
     except (OSError, ValidationError) as error:

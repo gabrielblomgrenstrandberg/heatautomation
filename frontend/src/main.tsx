@@ -66,6 +66,7 @@ function App() {
       };
       socket.onclose = event => {
         setConnected(false);
+        setHouse(null);
         if (stopped) return;
         if (event.code === 1008) { setAuthenticated(false); setStatus(null); return; }
         setError("Live connection lost. Reconnecting…");
@@ -94,7 +95,7 @@ function App() {
     try {
       const response = await fetch("/api/session", { method: "DELETE" });
       if (!response.ok) throw new Error("Sign-out failed.");
-      setAuthenticated(false); setStatus(null);
+      setAuthenticated(false); setStatus(null); setHouse(null);
     } catch { setError("Sign-out failed. Check the connection and try again."); }
   }
 

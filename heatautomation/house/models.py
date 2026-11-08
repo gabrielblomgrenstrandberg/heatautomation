@@ -146,8 +146,21 @@ room_settings = Table(
     Column("min_c", Float),
     Column("max_c", Float),
     Column("target_c", Float),
+    Column("max_preheat_c", Float, nullable=False, server_default="2"),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("max_preheat_c >= 0 AND max_preheat_c <= 2",
+                    name="ck_room_settings_preheat"),
 )
+room_target_events = Table(
+    "room_target_events",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("room_id", String(36), ForeignKey("rooms.id", ondelete="RESTRICT"), nullable=False),
+    Column("target_c", Float, nullable=False),
+    Column("recorded_at", DateTime(timezone=True), nullable=False),
+    Column("source", String(32), nullable=False),
+)
+Index("ix_room_target_events_room_time", room_target_events.c.room_id, room_target_events.c.recorded_at)
 room_overrides = Table(
     "room_overrides",
     metadata,

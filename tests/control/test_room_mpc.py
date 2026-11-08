@@ -49,6 +49,16 @@ class RoomMpcTests(unittest.TestCase):
             self.assertLessEqual(item["rooms"][0]["predicted_temperature_c"], 22 + 1e-5)
             self.assertGreaterEqual(item["rooms"][0]["predicted_temperature_c"], 20 - 1e-5)
 
+    def test_room_specific_preheat_limit(self):
+        steps = forecasts([0.05] * 8 + [3.0] * 136)
+        limited = Room("room", 20, 2e6, 100, {}, 18, 23, [20] * 144, 0,
+                       max_preheat_c=0.25)
+        plan = optimize_rooms([limited], [circuit(["room"])], steps)
+        self.assertTrue(all(step["rooms"][0]["predicted_temperature_c"] <= 20.25 + 1e-5
+                            for step in plan["intervals"]))
+        self.assertGreater(max(step["rooms"][0]["predicted_temperature_c"]
+                               for step in plan["intervals"][:8]), 20.1)
+
     def test_kmp_transfer_reduces_kitchen_radiator_and_independent_office(self):
         rooms = [room("living", links={"kitchen": 200}),
                  room("kitchen", links={"living": 200}), room("office")]
@@ -139,6 +149,8 @@ class RoomMpcTests(unittest.TestCase):
                     conn.execute(update(models.room_settings).values(
                         min_c=18, max_c=23, target_c=20))
                     rid = str(house.rooms[0].id)
+                    conn.execute(update(models.room_settings).where(
+                        models.room_settings.c.room_id == rid).values(max_preheat_c=0.5))
                     conn.execute(insert(models.room_schedules).values(
                         room_id=rid, weekday=3, start_min=60, end_min=120, target_c=21))
                     conn.execute(insert(models.room_overrides).values(
@@ -162,8 +174,12 @@ class RoomMpcTests(unittest.TestCase):
                 resolved = rooms_from_database(engine, forecasts(), readings, sources,
                                                timezone_name="UTC")
                 first = next(r for r in resolved if r.id == rid)
+                self.assertEqual(first.max_preheat_c, 0.5)
                 self.assertEqual(first.targets_c[:13],
                                  [20] * 4 + [21] * 4 + [22] * 4 + [20])
+                with engine.begin() as conn:
+                    conn.execute(update(models.room_settings).where(
+                        models.room_settings.c.room_id == rid).values(max_preheat_c=2))
                 with self.assertRaises(PlanningUnavailable):
                     rooms_from_database(engine, forecasts(), {}, sources, timezone_name="UTC")
                 wrong = dict(readings)

@@ -20,7 +20,7 @@ from .. import config
 from ..house.config import HouseConfig
 from .house_config import ConfigurationConflict, apply_configuration, read_configuration, save_configuration
 from .status import StatusUnavailable, read_status
-from .rooms import read_history, read_house, read_plan, set_override, set_room_settings
+from .rooms import read_history, read_house, read_plan, read_schedules, set_override, set_room_settings, set_schedules
 
 
 class Login(BaseModel):
@@ -52,6 +52,7 @@ class RoomSettings(BaseModel):
     target_c: float = Field(ge=-30, le=60, allow_inf_nan=False)
     min_c: float = Field(ge=-30, le=60, allow_inf_nan=False)
     max_c: float = Field(ge=-30, le=60, allow_inf_nan=False)
+    max_preheat_c: Optional[float] = Field(default=None, ge=0, le=2, allow_inf_nan=False)
 
 
 class RoomOverride(BaseModel):
@@ -66,6 +67,17 @@ class HouseConfigurationUpdate(BaseModel):
 
 class HouseConfigurationApply(BaseModel):
     revision: str = Field(min_length=64, max_length=64)
+
+
+class RoomScheduleEntry(BaseModel):
+    weekday: int = Field(ge=0, le=6, strict=True)
+    start_min: int = Field(ge=0, le=1439, strict=True)
+    end_min: int = Field(ge=1, le=1440, strict=True)
+    target_c: float = Field(ge=-30, le=60, allow_inf_nan=False)
+
+
+class RoomScheduleUpdate(BaseModel):
+    entries: list[RoomScheduleEntry] = Field(max_length=672)
 
 
 def create_app(password=None, database_path=None, origin=None, secure_cookie=None):
@@ -201,6 +213,28 @@ def create_app(password=None, database_path=None, origin=None, secure_cookie=Non
         except StatusUnavailable as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
+    @app.get("/api/rooms/{room_id}/schedules")
+    async def room_schedules(room_id: str, request: Request):
+        require_session(request)
+        try:
+            return await run_in_threadpool(read_schedules, database_path, room_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.put("/api/rooms/{room_id}/schedules", status_code=204)
+    async def update_room_schedules(room_id: str, payload: RoomScheduleUpdate, request: Request):
+        require_session(request)
+        require_origin(request)
+        try:
+            await run_in_threadpool(set_schedules, database_path, room_id,
+                                    [entry.model_dump() for entry in payload.entries])
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except StatusUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
     @app.get("/api/room-plan")
     async def room_plan(request: Request):
         require_session(request)
@@ -215,7 +249,8 @@ def create_app(password=None, database_path=None, origin=None, secure_cookie=Non
         require_origin(request)
         try:
             await run_in_threadpool(set_room_settings, database_path, room_id,
-                                    payload.target_c, payload.min_c, payload.max_c)
+                                    payload.target_c, payload.min_c, payload.max_c,
+                                    payload.max_preheat_c)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         except StatusUnavailable as error:

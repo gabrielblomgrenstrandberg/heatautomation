@@ -668,7 +668,7 @@ Each phase has an exit criterion. No phase enables automatic heating control.
 5. **Device adapters and commands behind TEST_MODE.** Implemented capability Protocols and an audited command gate. No vendor adapter or live command is connected. Live command paths remain disabled until device verification and a separate explicit enable decision.
 6. **Room-level optimiser.** Replaces the house-wide plan with per-room demand and per-source allocation. Exit: the room plan matches shadow demand on recorded data.
 7. **Predictive multi-room MPC.** Generalise `control/mpc.py` away from the hard-coded sources. Exit: simulated scenarios beat the baseline on comfort and energy.
-8. **Web GUI extensions.** Room monitoring, runtime targets and overrides, and simulation schedule viewing are available. Physical configuration editing, automatic room control, complete histories and learned-parameter management remain future work; device commands remain disabled.
+8. **Web GUI extensions.** Room monitoring, runtime targets, per-room simulation preheating limits, weekly schedules and overrides, simulation schedule viewing, and validated physical JSON editing with explicit reconciliation are available. Automatic room control, complete histories and learned-parameter management remain future work; device commands remain disabled.
 
 Estimated effort is deliberately not given. Phase 3 depends on the device API verification in §8.
 

@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import create_engine, insert, select, update
+from sqlalchemy import create_engine, delete, insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from heatautomation.house import models
@@ -105,6 +105,7 @@ def read_house(database_path):
                 "target_c": target, "base_target_c": setting.target_c if setting else None,
                 "min_c": setting.min_c if setting else None,
                 "max_c": setting.max_c if setting else None,
+                "max_preheat_c": setting.max_preheat_c if setting else None,
                 "override_expires_at": _iso(override.expires_at) if override else None,
                 "comfort": state, "predicted_c": predicted.predicted_c if predicted else None,
                 "prediction_at": _iso(predicted.target_at) if predicted else None,
@@ -142,14 +143,28 @@ def read_history(database_path, room_id):
         forecasts = conn.execute(select(models.room_thermal_predictions).where(
             models.room_thermal_predictions.c.room_id == room_id).order_by(
             models.room_thermal_predictions.c.created_at.desc()).limit(500)).all()
+        snapshots = conn.execute(select(models.room_thermal_snapshots).order_by(
+            models.room_thermal_snapshots.c.observed_at.desc()).limit(500)).all()
+        targets = conn.execute(select(models.room_target_events).where(
+            models.room_target_events.c.room_id == room_id).order_by(
+                models.room_target_events.c.recorded_at.desc()).limit(500)).all()
+        heat_inputs = []
+        for snapshot in reversed(snapshots):
+            data = json.loads(snapshot.data_json)
+            for source_id, reading in data.get("heat_inputs", {}).get(room_id, {}).items():
+                heat_inputs.append({"at": _iso(snapshot.observed_at), "source_id": source_id,
+                                    "watts": reading["watts"],
+                                    "classification": reading["classification"]})
         return {
             "temperatures": [{"at": _iso(r.observed_at), "value": r.value,
                               "quality": r.quality, "classification": r.classification}
                              for r in reversed(rows)],
             "predictions": [{"at": _iso(r.target_at), "predicted_c": r.predicted_c,
                              "actual_c": r.measured_c} for r in reversed(forecasts)],
-            "target_history": None, "heating_activity_history": None,
-            "source_contribution_history": None, "measured_expenditure": None,
+            "target_history": [{"at": _iso(row.recorded_at), "value": row.target_c,
+                                "source": row.source} for row in reversed(targets)],
+            "heating_activity_history": None,
+            "source_contribution_history": heat_inputs, "measured_expenditure": None,
         }
     return _load(database_path, query)
 
@@ -170,7 +185,50 @@ def read_plan(database_path):
     return _load(database_path, query)
 
 
-def set_room_settings(database_path, room_id, target_c, minimum_c, maximum_c):
+def read_schedules(database_path, room_id):
+    def query(conn):
+        exists = conn.execute(select(models.rooms.c.id).where(
+            (models.rooms.c.id == room_id) & models.rooms.c.removed_at.is_(None))).first()
+        if not exists:
+            raise ValueError("Room not found")
+        rows = conn.execute(select(models.room_schedules).where(
+            models.room_schedules.c.room_id == room_id).order_by(
+                models.room_schedules.c.weekday, models.room_schedules.c.start_min)).all()
+        return [{"weekday": r.weekday, "start_min": r.start_min,
+                 "end_min": r.end_min, "target_c": r.target_c} for r in rows]
+    return _load(database_path, query)
+
+
+def set_schedules(database_path, room_id, entries):
+    ordered = sorted(entries, key=lambda entry: (entry["weekday"], entry["start_min"]))
+    previous = None
+    for entry in ordered:
+        if (entry["start_min"] >= entry["end_min"] or entry["start_min"] % 15
+                or entry["end_min"] % 15):
+            raise ValueError("Schedule boundaries must be ordered 15-minute intervals")
+        if (previous and previous["weekday"] == entry["weekday"]
+                and previous["end_min"] > entry["start_min"]):
+            raise ValueError("Room schedule intervals cannot overlap")
+        previous = entry
+
+    def write(conn):
+        setting = conn.execute(select(models.room_settings).join(
+            models.rooms, models.rooms.c.id == models.room_settings.c.room_id).where(
+                (models.room_settings.c.room_id == room_id)
+                & models.rooms.c.removed_at.is_(None))).first()
+        if setting is None:
+            raise ValueError("Room not found")
+        if any(setting.min_c is None or setting.max_c is None
+               or not setting.min_c <= entry["target_c"] <= setting.max_c for entry in ordered):
+            raise ValueError("Schedule targets must be within room limits")
+        conn.execute(delete(models.room_schedules).where(models.room_schedules.c.room_id == room_id))
+        if ordered:
+            conn.execute(insert(models.room_schedules), [
+                dict(entry, room_id=room_id) for entry in ordered])
+    return _load(database_path, write, readonly=False)
+
+
+def set_room_settings(database_path, room_id, target_c, minimum_c, maximum_c, max_preheat_c=None):
     if not -30 <= minimum_c <= target_c <= maximum_c <= 60:
         raise ValueError("Temperature target must be within valid room limits")
     def write(conn):
@@ -189,12 +247,16 @@ def set_room_settings(database_path, room_id, target_c, minimum_c, maximum_c):
                | (models.room_overrides.c.target_c > maximum_c))).limit(1)).first()
         if conflicting_schedule or conflicting_override:
             raise ValueError("Room limits conflict with a schedule or unexpired override")
+        values = {"target_c": target_c, "min_c": minimum_c, "max_c": maximum_c,
+                  "updated_at": datetime.now(timezone.utc)}
+        if max_preheat_c is not None:
+            values["max_preheat_c"] = max_preheat_c
         updated = conn.execute(update(models.room_settings).where(
-            models.room_settings.c.room_id == room_id).values(
-                target_c=target_c, min_c=minimum_c, max_c=maximum_c,
-                updated_at=datetime.now(timezone.utc)))
+            models.room_settings.c.room_id == room_id).values(**values))
         if not updated.rowcount:
             raise ValueError("Room not found")
+        conn.execute(insert(models.room_target_events).values(
+            room_id=room_id, target_c=target_c, recorded_at=values["updated_at"], source="web"))
     return _load(database_path, write, readonly=False)
 
 

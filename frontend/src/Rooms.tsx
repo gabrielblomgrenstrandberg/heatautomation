@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from "react";
 import HouseConfiguration from "./HouseConfiguration";
+import RoomSchedules from "./RoomSchedules";
 
 type Device = { id: string; name: string; adapter: string | null; connectivity: string };
 type Room = {
   id: string; floor_id: string; name: string; temperature_c: number | null;
   temperature_stale: boolean; target_c: number | null; base_target_c: number | null;
   min_c: number | null; max_c: number | null; predicted_c: number | null;
+  max_preheat_c: number | null;
   prediction_at: string | null;
   comfort: "cold" | "warm" | "comfortable" | "unknown";
   override_expires_at: string | null; devices: Device[];
@@ -20,6 +22,8 @@ export type HouseData = {
 type History = {
   temperatures: { at: string; value: number; quality: string; classification: string }[];
   predictions: { at: string; predicted_c: number; actual_c: number | null }[];
+  target_history: { at: string; value: number; source: string }[];
+  source_contribution_history: { at: string; source_id: string; watts: number; classification: "measured" | "estimated" }[];
 };
 type Plan = { created_at: string; intervals: { room_id: string; start: string; data: {
   predicted_temperature_c: number; target_c: number; heating_demand_kw?: number;
@@ -47,12 +51,55 @@ function TemperatureChart({ history }: { history: History }) {
   if (!rows.length) return <p className="text-sm text-stone-500">No room temperature history available.</p>;
   const min = Math.min(...rows.map(item => item.value)) - 1;
   const max = Math.max(...rows.map(item => item.value)) + 1;
-  const points = rows.map((item, index) =>
-    `${rows.length === 1 ? 50 : index * 100 / (rows.length - 1)},${95 - 90 * (item.value - min) / (max - min)}`
+  const firstTime = new Date(rows[0].at).getTime();
+  const lastTime = new Date(rows[rows.length - 1].at).getTime();
+  const points = rows.map(item =>
+    `${lastTime === firstTime ? 50 : (new Date(item.at).getTime() - firstTime) * 100 / (lastTime - firstTime)},${95 - 90 * (item.value - min) / (max - min)}`
   ).join(" ");
   return <div><svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-40 w-full" role="img" aria-label="Recorded room temperature history">
     <polyline fill="none" stroke="currentColor" strokeWidth="1.5" className="text-teal-500" points={points}/>
   </svg><div className="flex justify-between text-xs text-stone-500"><span>{new Date(rows[0].at).toLocaleString()}</span><span>{new Date(rows[rows.length - 1].at).toLocaleString()}</span></div></div>;
+}
+
+function PredictionChart({ history }: { history: History }) {
+  const rows = history.predictions.filter(item => Number.isFinite(item.predicted_c) && Number.isFinite(Date.parse(item.at)));
+  if (!rows.length) return <p className="mt-2 text-sm text-stone-500">No prediction comparisons available.</p>;
+  const times = rows.map(row => Date.parse(row.at));
+  const values = rows.flatMap(row => row.actual_c == null ? [row.predicted_c] : [row.predicted_c, row.actual_c]);
+  const first = Math.min(...times), last = Math.max(...times);
+  const minimum = Math.min(...values) - 1, maximum = Math.max(...values) + 1;
+  const x = (time: number) => first === last ? 50 : 2 + 96 * (time - first) / (last - first);
+  const y = (temperature: number) => 95 - 90 * (temperature - minimum) / (maximum - minimum);
+  return <div className="mt-3"><svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-40 w-full" role="img" aria-label="Predicted and measured temperatures at forecast target times">
+    {rows.map((row, i) => <React.Fragment key={i}>
+      <circle cx={x(times[i])} cy={y(row.predicted_c)} r="1.5" className="fill-teal-500"/>
+      {row.actual_c != null && <circle cx={x(times[i])} cy={y(row.actual_c)} r="1.5" className="fill-orange-500"/>}
+    </React.Fragment>)}
+  </svg><div className="flex flex-wrap justify-between gap-2 text-xs text-stone-500"><span>Teal: predicted · Orange: actual</span><span>{new Date(first).toLocaleString()} – {new Date(last).toLocaleString()}</span></div></div>;
+}
+
+function HeatInputChart({ history, names }: { history: History; names: Map<string, string> }) {
+  const rows = history.source_contribution_history.filter(row => Number.isFinite(row.watts) && Number.isFinite(Date.parse(row.at)));
+  if (!rows.length) return <p className="mt-2 text-sm text-stone-500">No recorded heat-input snapshots for this room.</p>;
+  const times = rows.map(row => Date.parse(row.at)), first = Math.min(...times), last = Math.max(...times);
+  const max = Math.max(1, ...rows.map(row => row.watts));
+  return <div className="mt-3"><svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-40 w-full" role="img" aria-label="Recorded room heat inputs">
+    {rows.map((row, i) => <circle key={i} cx={first === last ? 50 : 2 + 96 * (times[i] - first) / (last - first)}
+      cy={95 - 90 * row.watts / max} r="1.5" className={row.classification === "measured" ? "fill-teal-500" : "fill-orange-500"}>
+      <title>{names.get(row.source_id) || row.source_id}: {row.watts} W ({row.classification}) at {new Date(row.at).toLocaleString()}</title></circle>)}
+  </svg><div className="text-xs text-stone-500">Teal: measured · Orange: estimated · Scale: 0–{max.toFixed(0)} W. Each point is a delivered-heat input, not a command.</div></div>;
+}
+
+function TargetChart({ history }: { history: History }) {
+  const rows = history.target_history.filter(row => Number.isFinite(row.value) && Number.isFinite(Date.parse(row.at)));
+  if (!rows.length) return <p className="mt-2 text-sm text-stone-500">No recorded base-target changes yet.</p>;
+  const first = Date.parse(rows[0].at), last = Date.parse(rows[rows.length - 1].at);
+  const low = Math.min(...rows.map(row => row.value)) - 1, high = Math.max(...rows.map(row => row.value)) + 1;
+  return <div className="mt-3"><svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-32 w-full" role="img" aria-label="Recorded room base-target changes">
+    {rows.map((row, i) => <circle key={i} cx={first === last ? 50 : 2 + 96 * (Date.parse(row.at) - first) / (last - first)}
+      cy={95 - 90 * (row.value - low) / (high - low)} r="1.5" className="fill-teal-500">
+      <title>{show(row.value)} at {new Date(row.at).toLocaleString()}</title></circle>)}
+  </svg><p className="text-xs text-stone-500">Recorded web changes to the base target only; this is not historical effective schedule or override data.</p></div>;
 }
 
 export default function Rooms({ house, error }: { house: HouseData | null; error: string }) {
@@ -64,6 +111,7 @@ export default function Rooms({ house, error }: { house: HouseData | null; error
   const [target, setTarget] = useState("");
   const [minimum, setMinimum] = useState("");
   const [maximum, setMaximum] = useState("");
+  const [preheat, setPreheat] = useState("2");
   const [override, setOverride] = useState("");
   const [minutes, setMinutes] = useState("60");
   useEffect(() => {
@@ -75,24 +123,32 @@ export default function Rooms({ house, error }: { house: HouseData | null; error
     setTarget(room.base_target_c == null ? "" : String(room.base_target_c));
     setMinimum(room.min_c == null ? "" : String(room.min_c));
     setMaximum(room.max_c == null ? "" : String(room.max_c));
+    setPreheat(room.max_preheat_c == null ? "2" : String(room.max_preheat_c));
     setOverride(room.target_c == null ? "" : String(room.target_c));
     setMessage("");
     let active = true;
     setHistory(null);
-    api(`/api/rooms/${encodeURIComponent(room.id)}/history`).then(data => {
+    const refresh = () => api(`/api/rooms/${encodeURIComponent(room.id)}/history`).then(data => {
       if (active) setHistory(data);
     }).catch(reason => { if (active) setMessage(reason.message); });
-    return () => { active = false; };
+    refresh();
+    const timer = setInterval(refresh, 30000);
+    return () => { active = false; clearInterval(timer); };
   }, [selected]);
   useEffect(() => {
-    api("/api/room-plan").then(setPlan).catch(reason => setMessage(reason.message));
+    let active = true;
+    const refresh = () => api("/api/room-plan").then(data => { if (active) setPlan(data); })
+      .catch(reason => { if (active) setMessage(reason.message); });
+    refresh();
+    const timer = setInterval(refresh, 30000);
+    return () => { active = false; clearInterval(timer); };
   }, []);
   async function save(event: React.FormEvent, temporary: boolean) {
     event.preventDefault();
     if (!room) return;
     const input = temporary
       ? { target_c: Number(override), minutes: Number(minutes) }
-      : { target_c: Number(target), min_c: Number(minimum), max_c: Number(maximum) };
+      : { target_c: Number(target), min_c: Number(minimum), max_c: Number(maximum), max_preheat_c: Number(preheat) };
     try {
       await api(`/api/rooms/${encodeURIComponent(room.id)}/${temporary ? "override" : "settings"}`, {
         method: temporary ? "POST" : "PUT", headers: { "Content-Type": "application/json" },
@@ -131,10 +187,12 @@ export default function Rooms({ house, error }: { house: HouseData | null; error
       {room && <div className="grid gap-5 lg:grid-cols-2">
         <section className="panel p-6"><div className="eyebrow">ROOM SETTINGS</div><h3 className="mt-2 text-xl font-semibold">{room.name}</h3>
           <p className="mt-2 text-sm text-stone-500">Settings are stored in SQL; they do not control devices. Automatic room control is not available. Scheduled targets are not resolved in this view.</p>
+          <label className="mt-4 flex items-center gap-2 text-sm text-stone-500"><input type="checkbox" disabled checked={false} readOnly/> Automatic room control unavailable</label>
           <form onSubmit={event => save(event, false)} className="mt-4 grid gap-3 sm:grid-cols-3">
             <label className="text-sm">Target °C<input className="input mt-1" type="number" step="0.1" required value={target} onChange={e => setTarget(e.target.value)}/></label>
             <label className="text-sm">Minimum °C<input className="input mt-1" type="number" step="0.1" required value={minimum} onChange={e => setMinimum(e.target.value)}/></label>
             <label className="text-sm">Maximum °C<input className="input mt-1" type="number" step="0.1" required value={maximum} onChange={e => setMaximum(e.target.value)}/></label>
+            <label className="text-sm sm:col-span-3">Maximum preheating above target °C<input className="input mt-1" type="number" min="0" max="2" step="0.1" required value={preheat} onChange={e => setPreheat(e.target.value)}/></label>
             <button className="primary-button sm:col-span-3">Save room settings</button>
           </form>
           <form onSubmit={event => save(event, true)} className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -151,11 +209,16 @@ export default function Rooms({ house, error }: { house: HouseData | null; error
         </section>
         <section className="panel p-6"><div className="eyebrow">ROOM HISTORY</div><h3 className="mt-2 text-xl font-semibold">Temperature</h3>
           <div className="mt-5">{history ? <TemperatureChart history={history}/> : "Loading…"}</div>
-          <p className="mt-4 text-xs text-stone-500">Target, heating activity, source contribution and expenditure history are not recorded yet.</p>
+          <p className="mt-4 text-xs text-stone-500">Equipment activity and expenditure history are not recorded yet.</p>
+          <h4 className="mt-5 font-semibold">Base-target changes</h4>
+          {history && <TargetChart history={history}/>}
           <h4 className="mt-5 font-semibold">Predicted versus actual</h4>
-          {history?.predictions.length ? <div className="mt-2 max-h-40 overflow-auto text-sm">{history.predictions.slice(-20).reverse().map((p, index) => <div key={index} className="py-1">{new Date(p.at).toLocaleString()} · predicted {show(p.predicted_c)} · actual {show(p.actual_c)}</div>)}</div> : <p className="mt-2 text-sm text-stone-500">No prediction comparisons available.</p>}
+          {history && <PredictionChart history={history}/>}
+          <h4 className="mt-5 font-semibold">Recorded heat contribution</h4>
+          {history && <HeatInputChart history={history} names={new Map(house.rooms.flatMap(r => r.sources.map(s => [s.id, s.name] as [string, string])))}/>}
         </section>
       </div>}
+      {room && <RoomSchedules roomId={room.id}/>}
       <section className="panel p-6"><div className="eyebrow">36-HOUR PLAN / SIMULATION ONLY</div><h3 className="mt-2 text-xl font-semibold">Room schedule</h3>
         {!plan ? <p className="mt-3 text-sm text-stone-500">No saved room simulation available.</p> : <div className="mt-4 max-h-96 overflow-auto">
           <table className="w-full text-left text-sm"><thead><tr><th>Time</th><th>Room</th><th>Temp / target</th><th>Demand</th><th>Sources</th><th>Cost</th></tr></thead>

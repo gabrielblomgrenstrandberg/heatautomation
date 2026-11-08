@@ -53,8 +53,15 @@ class RoomWebTests(unittest.TestCase):
                                          headers={"origin": ORIGIN, "content-type": "application/json"}).status_code, 422)
         self.assertEqual(self.client.put(path, json={**data, "target_c": 25}, headers={"origin": ORIGIN}).status_code, 400)
         self.assertEqual(self.client.put(path, json=data, headers={"origin": ORIGIN}).status_code, 204)
+        self.assertEqual(self.client.put(path, json={**data, "max_preheat_c": 0.4},
+                                         headers={"origin": ORIGIN}).status_code, 204)
         room = next(r for r in self.client.get("/api/house").json()["rooms"] if r["id"] == self.room_id)
         self.assertEqual(room["target_c"], 21)
+        self.assertEqual(room["max_preheat_c"], 0.4)
+        history = self.client.get(f"/api/rooms/{self.room_id}/history").json()
+        self.assertEqual(history["target_history"][-1]["value"], 21)
+        self.assertEqual(self.client.put(path, json={**data, "max_preheat_c": 2.1},
+                                         headers={"origin": ORIGIN}).status_code, 422)
         self.assertIsNone(room["heating_activity"])
         self.assertEqual(self.client.get("/api/rooms/missing/history").status_code, 404)
 
@@ -94,11 +101,17 @@ class RoomWebTests(unittest.TestCase):
             conn.execute(insert(models.room_thermal_predictions).values(
                 room_id=self.room_id, created_at=now - timedelta(hours=1), recorded_at=now,
                 target_at=now + timedelta(hours=1), horizon_seconds=7200, predicted_c=20))
+            conn.execute(insert(models.room_thermal_snapshots).values(
+                observed_at=now, data_json=json.dumps({"heat_inputs": {
+                    self.room_id: {"generator-id": {"watts": 500, "classification": "estimated"}}}})))
         house = self.client.get("/api/house").json()
         room = next(r for r in house["rooms"] if r["id"] == self.room_id)
         self.assertEqual(room["temperature_c"], 19.5)
         self.assertIsNone(room["predicted_c"])
         self.assertEqual(next(d for d in room["devices"] if d["id"] == device_id)["connectivity"], "unknown")
+        heat = self.client.get(f"/api/rooms/{self.room_id}/history").json()["source_contribution_history"]
+        self.assertEqual(heat[0]["watts"], 500)
+        self.assertEqual(heat[0]["classification"], "estimated")
         with self.client.websocket_connect("/api/live", headers={"origin": ORIGIN}) as websocket:
             self.assertEqual(websocket.receive_json()["type"], "status")
             self.assertEqual(websocket.receive_json()["type"], "house")
@@ -171,6 +184,27 @@ class RoomWebTests(unittest.TestCase):
                 (models.thermal_parameters.c.room_id == self.room_id)
                 & (models.thermal_parameters.c.name == "capacity_j_per_k"))).scalar_one()
         self.assertEqual(value, 12345678)
+
+    def test_schedule_validation_and_replacement(self):
+        self.login()
+        settings = f"/api/rooms/{self.room_id}/settings"
+        endpoint = f"/api/rooms/{self.room_id}/schedules"
+        self.client.put(settings, json={"target_c": 21, "min_c": 16, "max_c": 24},
+                        headers={"origin": ORIGIN})
+        first = {"weekday": 0, "start_min": 60, "end_min": 120, "target_c": 20}
+        self.assertEqual(self.client.put(endpoint, json={"entries": [first]}).status_code, 403)
+        self.assertEqual(self.client.put(endpoint, json={"entries": [first]}, headers={"origin": ORIGIN}).status_code, 204)
+        self.assertEqual(self.client.get(endpoint).json(), [first])
+        overlap = {"weekday": 0, "start_min": 105, "end_min": 135, "target_c": 20}
+        self.assertEqual(self.client.put(endpoint, json={"entries": [first, overlap]},
+                                         headers={"origin": ORIGIN}).status_code, 400)
+        self.assertEqual(self.client.put(endpoint, json={"entries": [{**first, "start_min": 61}]},
+                                         headers={"origin": ORIGIN}).status_code, 400)
+        self.assertEqual(self.client.put(endpoint, json={"entries": [{**first, "target_c": 25}]},
+                                         headers={"origin": ORIGIN}).status_code, 400)
+        self.assertEqual(self.client.get(endpoint).json(), [first])
+        self.assertEqual(self.client.put(endpoint, json={"entries": []}, headers={"origin": ORIGIN}).status_code, 204)
+        self.assertEqual(self.client.get(endpoint).json(), [])
 
 
 if __name__ == "__main__":

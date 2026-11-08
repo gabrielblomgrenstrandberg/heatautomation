@@ -30,7 +30,7 @@ docs/web-architecture.md  Architecture, API contract and staged roadmap
 ```
 
 The web app reads the existing thermal SQLite database using SQLAlchemy and
-existing table definitions. Room targets, limits and temporary overrides are
+existing table definitions. Room targets, limits, maximum preheating, schedules and temporary overrides are
 the only runtime data written by the GUI; these writes use an existing database
 and never dispatch commands. It does
 not create or migrate the controller database, contact providers, load joblib
@@ -53,10 +53,21 @@ Internet-facing identity provider.
 The API provides `POST /api/session`, `DELETE /api/session`, `GET /api/status`,
 `GET /api/house`, `GET /api/rooms/{room_id}/history`, `GET /api/room-plan`,
 `PUT /api/rooms/{room_id}/settings`, `POST /api/rooms/{room_id}/override`,
+`GET` and `PUT /api/rooms/{room_id}/schedules`, and
+`GET` and `PUT /api/house-configuration` plus
+`POST /api/house-configuration/apply`,
 and `WS /api/live`. Mutations require the authenticated session and trusted
 origin. Overrides start at the next quarter-hour boundary and are rounded up
 to whole 15-minute intervals to match the room planner. Conflicting future
 overrides and limits incompatible with schedules or overrides are rejected.
+Schedules must be non-overlapping, within room limits and aligned to the
+planner's 15-minute intervals. Schedule times use the time zone supplied to
+the planner. The physical editor validates the full document, checks its
+revision, and atomically replaces the existing file. Reconciliation is a
+separate explicit action and preserves learned and historical values. A saved
+file may remain unapplied after failure or interruption; retry apply. Revision
+checks and locking protect this web process only: external editors and other
+web processes must not write concurrently.
 FastAPI's `/docs` and `/openapi.json` describe HTTP schemas.
 WebSocket status messages retain the status response shape, while separate house
 messages carry room data; errors and missing
@@ -75,8 +86,8 @@ requested logs. Those require explicitly instrumented controller-side data,
 with retention, privacy, migrations and provenance defined before displaying
 them; never invent values or treat estimates as measurements.
 
-Physical configuration changes need a validated, versioned controller-owned settings
-interface and an explicit apply/restart policy; secrets remain backend-only.
+Physical configuration remains owned by the house file and is applied through
+the reconciliation service; secrets remain backend-only.
 Manual commands require a durable, authenticated, audited controller-owned
 command channel with idempotency, expiry, authorization, acknowledgements,
 manual/automatic arbitration, interlocks and conflict tests. A SQLite write or
