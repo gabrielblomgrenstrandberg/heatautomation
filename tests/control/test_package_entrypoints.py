@@ -13,7 +13,8 @@ class PackageEntrypointTests(unittest.TestCase):
         code = (
             "import runpy\n"
             "from unittest.mock import patch\n"
-            "with patch('threading.Thread'), "
+            "with patch('heatautomation.web.startup.start_web_server', return_value=None), "
+            "patch('threading.Thread'), "
             "patch('heatautomation.integrations.tibber.get_spot_price', "
             "side_effect=KeyboardInterrupt):\n"
             "    try:\n"
@@ -27,6 +28,16 @@ class PackageEntrypointTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("controller-started", result.stdout)
+
+    def test_application_starts_and_stops_web_server_with_controller(self):
+        server = object()
+        with patch("heatautomation.web.startup.start_web_server", return_value=server) as start, \
+                patch("heatautomation.web.startup.stop_web_server") as stop, \
+                patch.object(main, "main_loop", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                main.run_application()
+        start.assert_called_once_with()
+        stop.assert_called_once_with(server)
 
     def test_monitor_uses_relocated_modules(self):
         store = Mock()

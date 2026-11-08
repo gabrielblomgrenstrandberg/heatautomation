@@ -12,6 +12,90 @@ A script for selecting the best heat source based on spot price and temperature
 Run the test suite from the repository root with
 `python -m unittest discover -s tests`.
 
+## Web monitoring (initial read-only stage)
+
+The web application is a separate process and does **not** control equipment.
+It reads the thermal database produced by the running controller; if thermal
+learning is disabled, or the database is missing or stale, the dashboard reports
+that condition. It does not call provider APIs. The observation time is the
+collection time, not a guarantee of fresh provider data or physical heat output.
+See [web architecture and roadmap](./docs/web-architecture.md) for the API,
+safety boundaries, missing data and planned later stages.
+
+Use Python 3.9 or newer and Node.js 20.19+ or 22.12+. From the repository root:
+
+```powershell
+python -m pip install -r requirements.txt -r requirements-web.txt
+Set-Location frontend
+npm install
+npm run build
+Set-Location ..
+```
+
+Add a strong, random password of at least 32 characters to the existing ignored
+`heatautomation/.env` file:
+
+```text
+HEATAUTOMATION_WEB_PASSWORD=your-own-random-password-at-least-32-characters-long
+```
+
+Replace the example with your own secret and keep it private. An environment
+variable of the same name takes precedence over `.env`. Restart the application
+after editing it. Start the existing controller normally:
+
+```powershell
+python -m heatautomation.main
+```
+
+The controller automatically starts the web server in a separate process at
+`http://127.0.0.1:8000`. Open that address and sign in with the password above.
+The controller logs a warning if the password is missing or too short; if web
+dependencies are missing or port 8000 is occupied, the web process logs the
+error. Heating control continues if web startup fails or the web process exits.
+Stop the controller normally to stop the server it started. Set
+`HEATAUTOMATION_WEB_AUTOSTART=false` in `.env` or the environment to disable
+automatic startup when running a separate web server. The web server is not
+restarted automatically after a failure.
+
+The Docker image also builds and installs the web component. Its default
+loopback binding is private to the container. To publish it on the Docker host,
+set `HEATAUTOMATION_WEB_HOST=0.0.0.0` inside the container and publish port 8000
+only on the host's loopback interface (for example, `-p 127.0.0.1:8000:8000`).
+Other containers on the same network may also reach it, so use a trusted network
+and a strong password. Supply credentials at runtime, not in the image; the
+local `.env` file is excluded from the build context.
+
+Use the same working directory for the controller and web server or an absolute
+thermal database path in configuration. `/docs` contains the HTTP API
+documentation. The WebSocket at
+`/api/live` emits `{type: "status", data: ...}` snapshots or
+`{type: "error", message: ...}`; it requires the authenticated session and
+configured origin. The dashboard observes database updates at five-second
+intervals; the controller normally collects every five minutes.
+The displayed target is Sensibo's reported target, not a confirmed scheduler
+setting. Heat-pump cost is the observed Tibber total price divided by estimated
+COP; additional grid fees are not included.
+
+For frontend development, disable automatic web startup, run the web server
+separately with `python -m uvicorn heatautomation.web.app:create_app --factory
+--host 127.0.0.1 --port 8000`, run `npm run dev` in `frontend`, and set
+`HEATAUTOMATION_WEB_ORIGIN=http://127.0.0.1:5173` in the backend process before
+starting it. Vite proxies `/api` and WebSocket traffic to port 8000. The origin
+must match the browser URL exactly. Restart the backend after building the
+frontend. The password is backend-only and must not be committed; use a random
+secret, not the example placeholder. Sessions last up to eight hours and are
+lost when the web process restarts. Login attempts are limited in-process.
+
+The default is **local access only**, not a production Internet deployment.
+For remote access, arrange HTTPS and authenticated network access through a
+trusted reverse proxy, set `HEATAUTOMATION_WEB_ORIGIN` to the exact HTTPS
+origin and `HEATAUTOMATION_WEB_SECURE_COOKIE=true`, and do not expose the
+backend port directly. Protect the database and environment variables.
+The web service has no command, configuration, or scheduler execution API.
+
+After installing the web dependencies, run the focused tests with
+`python -m unittest tests.web.test_web`.
+
 ## Configuration
 
 Edit [heatautomation/heatautomation.conf](./heatautomation/heatautomation.conf) for location,

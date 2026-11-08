@@ -195,6 +195,21 @@ class SensiboStatusTests(unittest.TestCase):
 
 
 class KmpStatusTests(unittest.TestCase):
+    @patch.object(kmp, "WebDriverWait")
+    def test_login_bounds_page_load_time(self, wait):
+        driver = Mock()
+        wait.return_value.until.return_value = Mock()
+
+        kmp.login(driver)
+
+        driver.set_page_load_timeout.assert_called_once_with(
+            kmp.PAGE_LOAD_TIMEOUT_SECONDS
+        )
+        self.assertLess(
+            [call[0] for call in driver.method_calls].index("set_page_load_timeout"),
+            [call[0] for call in driver.method_calls].index("get"),
+        )
+
     @patch("selenium.webdriver.support.wait.time.sleep")
     def test_waits_until_mode_has_loaded(self, _sleep):
         driver = Mock()

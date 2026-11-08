@@ -37,6 +37,8 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+frontend/node_modules/
+frontend/dist/
 htmlcov/
 .tox/
 .nox/
