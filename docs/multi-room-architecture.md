@@ -470,7 +470,14 @@ Alembic is the only production schema manager. `create_all()` is removed from th
 
 ### 4.1 Algorithm
 
-Reconciliation runs at startup and on an explicit `reconcile` command. It is idempotent.
+Reconciliation is idempotent. On startup, a proven mismatch between the
+validated house file and the single recorded house hash replaces the database
+and trained model with a fresh migrated, reconciled database. This erases all
+database history and settings, including learned parameters, without a reset
+backup. Stop other database users before restarting. A missing house file or
+unrecorded hash does not trigger a reset. Changes through the editor or CLI
+require an application restart rather than reconciliation against a mismatched
+database. The following describes reconciliation within one matching database.
 
 1. Load `house.json`, validate it with Pydantic (`extra='forbid'`), and compute a canonical SHA-256 hash.
 2. Open a single transaction.
@@ -488,10 +495,11 @@ Running reconciliation twice with the same file produces no changes.
 
 ### 4.2 Learned-value policy
 
-- **Database wins.** A learned value is never overwritten by reload, restart, or a changed prior.
+- **Database wins within a matching configuration.** A changed house file
+  triggers the startup reset above, which erases learned values.
 - **Initialise only.** A config value is used only when no row exists.
 - **Explicit reset.** `reset-parameters --room <id> [--name <n>]` is a separate command. It first snapshots the current parameters into `thermal_parameter_events` and then sets `value = prior_value`. It does not delete history.
-- **Prior change.** When a prior changes in config, `prior_value` is updated and an event is logged. The learned `value` does not move until the learner is told to re-anchor, which requires `reset-parameters`.
+- **Prior change.** Changing a prior changes the house hash and triggers a reset.
 
 ### 4.3 Removed rooms and devices
 
@@ -499,7 +507,7 @@ Running reconciliation twice with the same file produces no changes.
 - Observations, commands, plans and parameter events referencing it are kept. Foreign keys use `ON DELETE RESTRICT`, so a hard delete is blocked by the database.
 - Removed entities are excluded from active calculations (`WHERE removed_at IS NULL`).
 - If the same ID reappears, `removed_at` is cleared. Its history is then active again, which is intended.
-- Hard deletion is a manual, separate operation with a backup. It is not part of reconciliation.
+- A configuration mismatch resets the entire database at startup rather than preserving removed entities.
 
 ---
 

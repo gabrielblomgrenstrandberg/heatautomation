@@ -5,8 +5,9 @@ from pathlib import Path
 
 from sqlalchemy import create_engine
 
-from .config import load_house_config
+from .config import config_hash, load_house_config
 from .reconcile import reconcile_house, reset_room_parameters
+from .startup_reset import recorded_house
 
 
 def main(argv=None):
@@ -31,6 +32,11 @@ def main(argv=None):
     try:
         if args.action == "reconcile":
             house_config = load_house_config(args.config)
+            recorded = recorded_house(args.database)
+            if recorded is not None and recorded != (str(house_config.house.id), config_hash(house_config)):
+                raise RuntimeError(
+                    "House configuration differs from the database. Restart the application "
+                    "to reset the database and learned model before reconciliation.")
             reconcile_house(engine, house_config)
             print("House configuration reconciled.")
         else:

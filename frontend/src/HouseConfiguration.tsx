@@ -38,7 +38,7 @@ export default function HouseConfiguration() {
       const result = await request("/api/house-configuration", "PUT", { revision, config });
       setRevision(result.revision);
       setDirty(false);
-      setMessage("File saved. Apply it separately to reconcile the database.");
+      setMessage("File saved. If the house changed, restart the application to reset its database and learned model.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save configuration."); }
   }
   async function apply() {
@@ -49,7 +49,7 @@ export default function HouseConfiguration() {
   }
   return <section className="panel p-6"><div className="eyebrow">PHYSICAL CONFIGURATION</div>
     <h3 className="mt-2 text-xl font-semibold">House configuration editor</h3>
-    <p className="mt-2 text-sm text-stone-500">Edit floors, rooms, stable IDs, devices, Tado mappings, Mill device assignments, heat paths and thermal links as validated JSON. Save changes to the house file, then apply them to the database. Existing learned values are preserved. Do not edit the file concurrently outside this web process.</p>
+    <p className="mt-2 text-sm text-stone-500">Edit floors, rooms, stable IDs, devices, Tado mappings, Mill device assignments, heat paths and thermal links as validated JSON. A changed house configuration requires an application restart and permanently resets the thermal database and learned model, including room settings and history. Do not edit the file concurrently outside this web process.</p>
     <div className="mt-4"><button type="button" className="status-pill" onClick={load}>Load / reload configuration</button></div>
     {revision && <form className="mt-4 space-y-3" onSubmit={save}>
       <label className="block text-sm" htmlFor="house-config">House JSON</label>

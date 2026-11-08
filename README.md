@@ -137,12 +137,11 @@ SQL, not dispatched to devices. Preheating affects new simulation plans only.
 Overrides start at the
 next 15-minute boundary and durations round up to 15-minute intervals; an
 overlapping future override is rejected. The configuration editor validates
-`config/house.json`, saves it atomically, and applies it to SQL as a separate
-operation. Set `HEATAUTOMATION_HOUSE_CONFIG` for a different file; the file
+`config/house.json` and saves it atomically. Set `HEATAUTOMATION_HOUSE_CONFIG` for a different file; the file
 must already exist. A revision prevents stale saves within this web process.
-Do not edit the file concurrently from another process. If applying fails or
-the process stops after saving, retry the explicit apply; no automatic recovery
-is implied. Reconciliation preserves learned values and historical data.
+Do not edit the file concurrently from another process. If the saved house
+differs from the recorded database configuration, restart the application:
+the database and learned model will be reset before workers start.
 Automatic control and complete historical series are
 not yet managed by the GUI. Missing measurements and actual heat delivery remain unknown.
 The base-target history starts with web changes after migration; it is not an
@@ -198,9 +197,19 @@ python -m heatautomation.house.cli reconcile --database thermal_history.sqlite3 
 ```
 
 The migration command creates a SQLite backup beside an existing database
-before upgrading it. Reconciliation only adds missing records or updates
-physical configuration fields; learned parameter values and runtime settings
-remain in SQL. Restore the backup if a migration fails. The legacy
+before upgrading it. **On application startup, a valid house file whose
+canonical hash or house ID differs from the one recorded in SQL causes the
+thermal database and trained model file to be replaced with a fresh migrated,
+reconciled database.** This permanently removes observations, learned
+parameters, room settings, schedules, discovery history and plans. All house
+changes, including names and discovery settings, count. Stop other processes
+using the database before restarting. No backup is created by this reset.
+The web editor and CLI reject applying a changed configuration to a running
+database; restart instead. Missing house files or databases and databases
+without a recorded hash are not treated as proven mismatches. Other app
+configuration, such as integration settings, is not part of this house hash.
+Reconciliation of an unchanged configuration preserves runtime data. Restore
+the migration backup if a migration fails. The legacy
 `thermal_sensors` row named `indoor_c` is retained; assigning it to a room and
 backfilling room measurements requires an explicit room mapping first.
 
@@ -216,8 +225,8 @@ python -m heatautomation.house.cli reset-parameters --database thermal_history.s
 The standalone `heatautomation.thermal.rooms.RoomThermalService` uses the SQL
 room parameters, settings and symmetric thermal graph. The example graph
 connects KMP's living room to the kitchen, nursery and bathroom, not to the
-office or Floor 0. Changing an existing house file requires reconciliation;
-removed links are soft-deleted. Priors in the example are placeholders.
+office or Floor 0. Changing an existing house file requires an application
+restart and database reset as described above. Priors in the example are placeholders.
 
 After migrating and reconciling, `save_snapshot(observed_at, temperatures,
 outdoor_c, heat_inputs)` records one synchronized observation and associated

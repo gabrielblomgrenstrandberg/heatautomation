@@ -688,6 +688,11 @@ def main_loop():
 
 def run_application():
     from .web.startup import start_web_server, stop_web_server
+    from .house.startup_reset import reset_mismatched_house
+
+    reset_mismatched_house(
+        config.THERMAL_DATABASE_PATH, config.THERMAL_MODEL_PATH,
+        os.environ.get("HEATAUTOMATION_HOUSE_CONFIG", "config/house.json"))
 
     try:
         from .discovery.service import start_worker

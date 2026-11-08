@@ -207,11 +207,13 @@ class RoomWebTests(unittest.TestCase):
                 (models.thermal_parameters.c.room_id == self.room_id)
                 & (models.thermal_parameters.c.name == "capacity_j_per_k")).values(
                     value=12345678, sample_count=7))
-        self.assertEqual(client.post(endpoint + "/apply", json={"revision": revision},
-                                     headers={"origin": ORIGIN}).status_code, 204)
+        response = client.post(endpoint + "/apply", json={"revision": revision},
+                               headers={"origin": ORIGIN})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Restart", response.json()["detail"])
         after = client.get("/api/house").json()
-        self.assertEqual(next(r for r in after["rooms"] if r["id"] == self.room_id)["name"],
-                         "Updated living room")
+        self.assertNotEqual(next(r for r in after["rooms"] if r["id"] == self.room_id)["name"],
+                            "Updated living room")
         with self.db.engine.connect() as conn:
             value = conn.execute(select(models.thermal_parameters.c.value).where(
                 (models.thermal_parameters.c.room_id == self.room_id)

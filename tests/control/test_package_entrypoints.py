@@ -39,6 +39,20 @@ class PackageEntrypointTests(unittest.TestCase):
         start.assert_called_once_with()
         stop.assert_called_once_with(server)
 
+    def test_reset_precedes_service_startup(self):
+        events = []
+        with patch("heatautomation.house.startup_reset.reset_mismatched_house",
+                   side_effect=lambda *args: events.append("reset")), \
+                patch("heatautomation.discovery.service.start_worker",
+                      side_effect=lambda *args: events.append("discovery")), \
+                patch("heatautomation.web.startup.start_web_server",
+                      side_effect=lambda: events.append("web")), \
+                patch("heatautomation.web.startup.stop_web_server"), \
+                patch.object(main, "main_loop", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                main.run_application()
+        self.assertEqual(events, ["reset", "discovery", "web"])
+
     def test_monitor_uses_relocated_modules(self):
         store = Mock()
         with patch.object(database, "ThermalDatabase", return_value=store), \
