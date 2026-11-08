@@ -25,6 +25,57 @@ TADO_PROFILE = {
 
 
 class SelectedIntegrationTests(unittest.TestCase):
+    def test_auto_and_disabled_sensibo_choose_unique_mapped_tado_room(self):
+        data = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        mapped = data["tado_rooms"][0]
+        mapped["home_id"], mapped["zone_id"] = 1, 2
+        settings = configparser.ConfigParser()
+        settings.read_dict({"mpc": {"indoor_source": "auto", "tado_room_id": ""}})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "house.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with patch.object(config, "_settings", settings), \
+                    patch.object(config, "SENSIBO_ENABLED", False), \
+                    patch.object(config, "TADO_ENABLED", True), \
+                    patch.object(config, "KMP_ENABLED", True), \
+                    patch.dict("os.environ", {"HEATAUTOMATION_HOUSE_CONFIG": str(path)}):
+                result = profile.current()
+                self.assertEqual(result["indoor_source"], "tado")
+                self.assertEqual(result["tado_room_id"], mapped["room_id"])
+                self.assertEqual(result["tado_zone"], "1:2")
+                self.assertFalse(result["heatpump_absent"])
+                self.assertFalse(result["other_heating_absent"])
+                settings.set("mpc", "indoor_source", "sensibo")
+                self.assertEqual(profile.current(), result)
+                second = data["tado_rooms"][1]
+                second["home_id"], second["zone_id"] = 1, 3
+                path.write_text(json.dumps(data), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "exactly one mapped room"):
+                    profile.current()
+                settings.set("mpc", "tado_room_id", mapped["room_id"])
+                self.assertEqual(profile.current()["tado_zone"], "1:2")
+                path.unlink()
+                with self.assertRaisesRegex(ValueError, "valid house configuration"):
+                    profile.current()
+
+    def test_auto_prefers_enabled_sensibo_and_never_uses_disabled_tado(self):
+        settings = configparser.ConfigParser()
+        settings.read_dict({"mpc": {"indoor_source": "auto"}})
+        with patch.object(config, "_settings", settings), \
+                patch.object(config, "SENSIBO_ENABLED", True), \
+                patch.object(config, "TADO_ENABLED", True):
+            self.assertEqual(profile.current()["indoor_source"], "sensibo")
+        with patch.object(config, "_settings", settings), \
+                patch.object(config, "SENSIBO_ENABLED", False), \
+                patch.object(config, "TADO_ENABLED", False):
+            with self.assertRaisesRegex(ValueError, "No enabled indoor"):
+                profile.current()
+            with self.assertRaisesRegex(PlanningUnavailable, "No enabled indoor"):
+                mpc_monitor.run_shadow_cycle(Mock(), lambda _: 4)
+            settings.set("mpc", "indoor_source", "tado")
+            with self.assertRaisesRegex(ValueError, "Tado indoor source is disabled"):
+                profile.current()
+
     def test_tado_collection_uses_only_recent_online_room_temperature(self):
         service = Mock()
         database = Mock()
@@ -97,7 +148,16 @@ class SelectedIntegrationTests(unittest.TestCase):
                   for i in range(16)]
         forecast = [{"time": "2026-01-01T{:02d}:00".format(i), "temperature_c": 0}
                     for i in range(1, 7)]
-        with patch.object(profile, "current", return_value=TADO_PROFILE), \
+        settings = configparser.ConfigParser()
+        settings.read_dict({"mpc": {
+            "indoor_source": "auto", "heatpump_absent": "true",
+            "other_heating_absent": "true",
+        }})
+        house = SimpleNamespace(tado_rooms=[
+            SimpleNamespace(room_id="room-1", home_id=1, zone_id=2)
+        ])
+        with patch.object(config, "_settings", settings), \
+                patch("heatautomation.house.config.load_house_config", return_value=house), \
                 patch.object(config, "SENSIBO_ENABLED", False), \
                 patch.object(config, "TADO_ENABLED", True), \
                 patch.object(config, "KMP_ENABLED", True), \
@@ -108,8 +168,14 @@ class SelectedIntegrationTests(unittest.TestCase):
                              return_value=Settings(18, 20, 22, 1, uncertainty_margin_c=0)), \
                 patch.object(mpc_monitor, "ThermalPredictor", return_value=model), \
                 patch.object(mpc_monitor.tibber, "get_price_forecast", return_value=prices), \
-                patch.object(mpc_monitor.weather, "get_forecast", return_value=forecast):
+                patch.object(mpc_monitor.weather, "get_forecast", return_value=forecast), \
+                patch.object(collection.kmp, "on") as stove_on, \
+                patch.object(collection.kmp, "off") as stove_off, \
+                patch.object(collection.sensibo, "on") as pump_on, \
+                patch.object(collection.sensibo, "off") as pump_off:
             self.assertEqual(mpc_monitor.run_shadow_cycle(database, lambda _: 6, now), 1)
+            for command in (stove_on, stove_off, pump_on, pump_off):
+                command.assert_not_called()
             plan = database.save_plan.call_args.args[-1]
             self.assertTrue(plan)
             self.assertTrue(all(not row["mode"] & 1 and row["heatpump_kw"] == 0

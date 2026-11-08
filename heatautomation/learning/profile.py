@@ -8,19 +8,35 @@ from .. import config
 
 def current():
     source = config._settings.get("mpc", "indoor_source", fallback="sensibo").strip().lower()
-    if source not in ("sensibo", "tado"):
-        raise ValueError("[mpc] indoor_source must be sensibo or tado")
+    if source not in ("auto", "sensibo", "tado"):
+        raise ValueError("[mpc] indoor_source must be auto, sensibo or tado")
+    if source == "auto" or (source == "sensibo" and not config.SENSIBO_ENABLED and config.TADO_ENABLED):
+        if config.SENSIBO_ENABLED and source == "auto":
+            source = "sensibo"
+        elif config.TADO_ENABLED:
+            source = "tado"
+        else:
+            raise ValueError("No enabled indoor temperature integration; enable Sensibo or Tado")
     room = config._settings.get("mpc", "tado_room_id", fallback="").strip()
-    if source == "tado" and not room:
-        raise ValueError("[mpc] tado_room_id is required for Tado indoor temperature")
     zone = ""
     if source == "tado":
+        if not config.TADO_ENABLED:
+            raise ValueError("Tado indoor source is disabled; enable Tado or select another source")
         from ..house.config import load_house_config
         path = os.environ.get("HEATAUTOMATION_HOUSE_CONFIG", "config/house.json")
         try:
             house = load_house_config(path)
         except (OSError, ValueError) as error:
-            raise ValueError("Tado indoor source requires a valid house configuration") from error
+            raise ValueError(
+                "Tado indoor source requires a valid house configuration at {}; "
+                "configure a Tado room with its home and zone IDs".format(path)
+            ) from error
+        if not room:
+            mapped = [item for item in house.tado_rooms if item.home_id is not None]
+            if len(mapped) != 1:
+                raise ValueError(
+                    "Tado indoor source requires exactly one mapped room or [mpc] tado_room_id")
+            room = str(mapped[0].room_id)
         mapping = next((item for item in house.tado_rooms if str(item.room_id) == room), None)
         if mapping is None or mapping.home_id is None:
             raise ValueError("Tado indoor room requires a mapped home and zone")

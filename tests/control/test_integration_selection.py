@@ -8,10 +8,15 @@ from unittest.mock import Mock, patch
 from heatautomation import config, main
 from heatautomation.control.mpc import PlanningUnavailable
 from heatautomation.control.mpc_monitor import run_shadow_cycle
-from heatautomation.learning import collection
+from heatautomation.learning import collection, profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
+SENSIBO_PROFILE = {
+    "indoor_source": "sensibo", "tado_room_id": "", "tado_zone": "",
+    "heatpump_absent": False, "pelletstove_absent": False,
+    "other_heating_absent": False,
+}
 
 
 class IntegrationSelectionTests(unittest.TestCase):
@@ -52,6 +57,7 @@ class IntegrationSelectionTests(unittest.TestCase):
     def test_no_sensibo_does_not_read_or_command_it(self):
         database = Mock()
         with patch.object(config, "SENSIBO_ENABLED", False), \
+                patch.object(profile, "current", return_value=SENSIBO_PROFILE), \
                 patch.object(config, "KMP_ENABLED", True), \
                 patch.object(config, "TIBBER_ENABLED", False), \
                 patch.object(config, "WEATHER_ENABLED", False), \
@@ -193,6 +199,7 @@ class IntegrationSelectionTests(unittest.TestCase):
     def test_collection_does_not_poll_any_disabled_provider(self):
         database = Mock()
         with patch.object(config, "SENSIBO_ENABLED", False), \
+                patch.object(profile, "current", return_value=SENSIBO_PROFILE), \
                 patch.object(config, "KMP_ENABLED", False), \
                 patch.object(config, "TIBBER_ENABLED", False), \
                 patch.object(config, "WEATHER_ENABLED", False), \

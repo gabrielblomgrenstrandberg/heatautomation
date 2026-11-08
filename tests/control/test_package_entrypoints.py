@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from heatautomation import main
-from heatautomation.learning import collection, database, training
+from heatautomation.learning import collection, database, profile, training
 
 
 class PackageEntrypointTests(unittest.TestCase):
@@ -55,15 +55,51 @@ class PackageEntrypointTests(unittest.TestCase):
 
     def test_monitor_uses_relocated_modules(self):
         store = Mock()
+        selected = {
+            "indoor_source": "sensibo", "tado_room_id": "", "tado_zone": "",
+            "heatpump_absent": False, "pelletstove_absent": False,
+            "other_heating_absent": False,
+        }
         with patch.object(database, "ThermalDatabase", return_value=store), \
+                patch.object(profile, "current", return_value=selected), \
+                patch.object(main.config, "MPC_ENABLED", False), \
                 patch.object(collection, "collect") as collect, \
                 patch.object(training, "train") as train, \
                 patch.object(main.time, "monotonic", return_value=0), \
                 patch.object(main.time, "sleep", side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
                 main.thermal_monitor_loop()
-        collect.assert_called_once_with(store, main.get_effective_heating_capacity)
-        train.assert_called_once_with(store, main.config.THERMAL_MODEL_PATH)
+        collect.assert_called_once_with(store, main.get_effective_heating_capacity, None, selected)
+        train.assert_called_once_with(store, main.config.THERMAL_MODEL_PATH, selected)
+
+    def test_tado_profile_is_shared_with_shadow_planner(self):
+        from heatautomation.control import mpc_monitor
+        from heatautomation.house import config as house_config
+        from heatautomation.integrations import tado
+
+        selected = {
+            "indoor_source": "tado", "tado_room_id": "room", "tado_zone": "1:2",
+            "heatpump_absent": True, "pelletstove_absent": False,
+            "other_heating_absent": True,
+        }
+        store, service, house = Mock(), Mock(), Mock()
+        with patch.object(database, "ThermalDatabase", return_value=store), \
+                patch.object(profile, "current", return_value=selected), \
+                patch.object(main.config, "TADO_ENABLED", True), \
+                patch.object(main.config, "MPC_ENABLED", True), \
+                patch.object(house_config, "load_house_config", return_value=house), \
+                patch.object(tado, "TadoService", return_value=service), \
+                patch.object(collection, "collect") as collect, \
+                patch.object(training, "train") as train, \
+                patch.object(mpc_monitor, "run_shadow_cycle") as run, \
+                patch.object(main.time, "monotonic", return_value=0), \
+                patch.object(main.time, "sleep", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                main.thermal_monitor_loop()
+        collect.assert_called_once_with(store, main.get_effective_heating_capacity, service, selected)
+        train.assert_called_once_with(store, main.config.THERMAL_MODEL_PATH, selected)
+        run.assert_called_once_with(store, main.get_effective_heating_capacity,
+                                    selected_profile=selected)
 
 
 if __name__ == "__main__":

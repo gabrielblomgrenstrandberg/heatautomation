@@ -717,9 +717,14 @@ statuses are required. Provider failure, missing data, infeasible constraints,
 or insufficient model quality are logged; no substitute plan or control
 action is generated.
 
-To use Tado instead of Sensibo as the indoor sensor, set `indoor_source = tado`
-in `[mpc]` and `tado_room_id` to the UUID of one mapped room in `config/house.json`
-(or the path in `HEATAUTOMATION_HOUSE_CONFIG`). Complete Tado device
+The default `[mpc] indoor_source = auto` selects Sensibo when enabled, otherwise
+Tado when enabled. An existing `indoor_source = sensibo` configuration also
+falls back to Tado when Sensibo is disabled and Tado is enabled. To explicitly
+select Tado even when Sensibo is enabled, set `indoor_source = tado`. Configure
+Tado home and zone mappings in `config/house.json` (or the path in
+`HEATAUTOMATION_HOUSE_CONFIG`). With exactly one mapped room it is selected
+automatically; otherwise set `tado_room_id` to the UUID of the intended mapped
+room. No room is chosen when mappings are missing or ambiguous. Complete Tado device
 authorization first using the default token file described above. The
 collector requires an online room and a provider temperature timestamp no
 older than ten minutes. It uses the same room throughout the history; changing

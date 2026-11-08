@@ -550,7 +550,14 @@ def thermal_monitor_loop():
         try:
             if database is None:
                 database = thermal_database.ThermalDatabase(config.THERMAL_DATABASE_PATH)
-            selected_profile = thermal_profile.current()
+            try:
+                selected_profile = thermal_profile.current()
+            except ValueError as error:
+                logging.warning("Thermal monitoring and shadow MPC unavailable: %s", error)
+                next_poll += 300
+                if next_poll <= time.monotonic():
+                    next_poll = time.monotonic() + 300
+                continue
             if tado_service is not None and selected_profile != tado_service_profile:
                 tado_service.close()
                 tado_service = None
@@ -580,7 +587,8 @@ def thermal_monitor_loop():
                 from .learning.prediction import PredictionUnavailable
                 try:
                     database.evaluate_plans(evaluate)
-                    run_shadow_cycle(database, get_effective_heating_capacity)
+                    run_shadow_cycle(database, get_effective_heating_capacity,
+                                     selected_profile=selected_profile)
                 except (PlanningUnavailable, PredictionUnavailable) as error:
                     logging.warning("Shadow MPC planning unavailable: %s", error)
         except Exception:

@@ -75,8 +75,13 @@ def build_intervals(prices, forecast, start, pump_capacity):
     return result
 
 
-def run_shadow_cycle(database, pump_capacity, now=None):
-    settings_profile = profile.current()
+def run_shadow_cycle(database, pump_capacity, now=None, selected_profile=None):
+    if selected_profile is None:
+        try:
+            selected_profile = profile.current()
+        except ValueError as error:
+            raise PlanningUnavailable(str(error)) from error
+    settings_profile = selected_profile
     if not config.TIBBER_ENABLED or not config.WEATHER_ENABLED:
         raise PlanningUnavailable("Shadow MPC requires Tibber and weather forecasts")
     if settings_profile["indoor_source"] == "sensibo" and not config.SENSIBO_ENABLED:
