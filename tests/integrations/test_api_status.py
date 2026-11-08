@@ -195,6 +195,23 @@ class SensiboStatusTests(unittest.TestCase):
 
 
 class KmpStatusTests(unittest.TestCase):
+    @patch.object(kmp, "login")
+    @patch.object(kmp, "start_chrome")
+    def test_incomplete_portal_mode_is_unavailable(self, start_chrome, _login):
+        driver = start_chrome.return_value
+        for mode in (None, "", "  ", "--", " -- "):
+            with self.subTest(mode=mode), patch.object(kmp, "get_mode", return_value=mode):
+                with self.assertLogs(level="WARNING"):
+                    self.assertIsNone(kmp.get_status())
+        self.assertEqual(driver.quit.call_count, 5)
+
+    @patch.object(kmp, "get_mode", return_value=" HÖGEFFEKT ")
+    @patch.object(kmp, "login")
+    @patch.object(kmp, "start_chrome")
+    def test_valid_portal_mode_is_returned(self, start_chrome, _login, _get_mode):
+        self.assertEqual(kmp.get_status(), {"mode": "HÖGEFFEKT"})
+        start_chrome.return_value.quit.assert_called_once()
+
     @patch.object(kmp, "WebDriverWait")
     def test_login_bounds_page_load_time(self, wait):
         driver = Mock()

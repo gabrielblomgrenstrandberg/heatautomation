@@ -12,6 +12,20 @@ A script for selecting the best heat source based on spot price and temperature
 Run the test suite from the repository root with
 `python -m unittest discover -s tests`.
 
+The multi-floor simulation integration scenarios can be run separately:
+
+```powershell
+python -m unittest discover -s tests\integrations -p test_multifloor_simulation.py
+```
+
+They use synthetic thermal parameters and mocked integrations, compare model
+forecasts with a separately integrated synthetic plant, and exercise the real
+simulation planner and command gates. Passing does not validate real-world
+equipment, sensor accuracy, prices or a production command path. Tado and
+Mill are not yet wired into the main controller, so their outage tests verify
+adapter errors and simulated dispatch safety, not a live controller recovery
+loop. Automatic multi-room control must remain disabled.
+
 ## Web monitoring and room settings
 
 The web application is a separate process and does **not** control equipment.

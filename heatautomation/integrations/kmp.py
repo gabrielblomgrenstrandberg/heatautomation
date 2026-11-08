@@ -189,9 +189,10 @@ def get_status():
     try:
         login(driver)
         mode = get_mode(driver)
-        if mode is None:
+        if not isinstance(mode, str) or not mode.strip() or mode.strip() == "--":
+            logging.warning("Pellet stove portal returned an incomplete mode.")
             return None
-        return {"mode": mode}
+        return {"mode": mode.strip()}
     except Exception as e:
         logging.error("Could not read pellet stove status: %s", e)
         return None
